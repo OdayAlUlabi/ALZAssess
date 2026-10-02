@@ -1,0 +1,20 @@
+{
+  "workloads": [
+    {
+      "name": "Business Application A",
+      "businessPurpose": "Replace with the business service description",
+      "owner": "application-owner@example.com",
+      "criticality": "Mission-critical",
+      "rto": "4 hours",
+      "rpo": "1 hour",
+      "subscriptionId": "00000000-0000-0000-0000-000000000000",
+      "resourceGroups": [
+        "rg-app-a-prod"
+      ],
+      "regions": [
+        "westeurope"
+      ],
+      "notes": "Replace this example with three to five representative workloads."
+    }
+  ]
+}

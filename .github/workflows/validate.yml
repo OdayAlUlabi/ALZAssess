@@ -1,0 +1,46 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate PowerShell and JSON
+        shell: pwsh
+        run: |
+          $parseErrors = @()
+
+          Get-ChildItem -Filter '*.ps1' -Recurse |
+            ForEach-Object {
+              $tokens = $null
+              $fileErrors = $null
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                $_.FullName,
+                [ref]$tokens,
+                [ref]$fileErrors
+              ) | Out-Null
+              $parseErrors += $fileErrors
+            }
+
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | Format-List
+            throw 'PowerShell syntax validation failed.'
+          }
+
+          Get-Content '.\workloads.example.json' -Raw |
+            ConvertFrom-Json -ErrorAction Stop |
+            Out-Null
+
+          Write-Host 'Validation passed.'

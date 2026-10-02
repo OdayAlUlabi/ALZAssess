@@ -1,0 +1,25 @@
+# Assessment evidence can contain tenant, identity, network, and security data.
+output/
+**/output/
+
+# Local workload definitions can contain business and ownership data.
+workloads.json
+workloads.*.json
+!workloads.example.json
+
+# Runtime artifacts
+_collection.log
+_collection-errors.csv
+_run-metadata.json
+_stage-*.complete.json
+*.tmp
+*.bak
+
+# PowerShell and editor state
+*.clixml
+.vscode/
+.idea/
+
+# Operating system files
+Thumbs.db
+.DS_Store

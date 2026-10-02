@@ -54,6 +54,55 @@ Use `pwsh`, not Windows PowerShell (`powershell.exe`). `ConvertFrom-Json` and ot
 
 Omit `-SubscriptionId` to collect all enabled subscriptions visible to the signed-in identity.
 
+## Full assessment when workloads are not known
+
+If workloads have not yet been identified, collect the tenant and platform baseline first. Run stages 0 through 8, skip the workload-specific stage 9, and then run stage 10 to build the evidence index.
+
+The following example runs the Full profile across all enabled subscriptions visible to the signed-in Azure CLI identity:
+
+```powershell
+$outputPath = '.\output\full-platform-assessment'
+
+pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
+  -Profile Full `
+  -StartAtStage 0 `
+  -EndAtStage 8 `
+  -OutputPath $outputPath `
+  -FailOnCollectionError
+
+pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
+  -StartAtStage 10 `
+  -EndAtStage 10 `
+  -OutputPath $outputPath
+```
+
+To resume stages 0 through 8 after an interruption, use the same output path:
+
+```powershell
+pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
+  -Profile Full `
+  -StartAtStage 0 `
+  -EndAtStage 8 `
+  -OutputPath '.\output\full-platform-assessment' `
+  -FailOnCollectionError `
+  -Resume
+```
+
+> [!WARNING]
+> Omitting `-SubscriptionId` includes every enabled subscription visible to the signed-in identity. Full mode also queries diagnostic settings for every resource, so large estates can take several hours and generate sensitive evidence. Use an approved, access-controlled output location.
+
+After reviewing the inventory, work with platform and application owners to identify approximately three to five representative or critical workloads. Copy `workloads.example.json` to `workloads.json`, define those workload scopes, and then run stages 9 and 10:
+
+```powershell
+Copy-Item '.\workloads.example.json' '.\workloads.json'
+
+pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
+  -WorkloadConfigPath '.\workloads.json' `
+  -StartAtStage 9 `
+  -EndAtStage 10 `
+  -OutputPath '.\output\full-platform-assessment'
+```
+
 Useful switches:
 
 - `-Profile Fast`: skips Entra/Microsoft Graph and per-resource diagnostics for rapid platform inventory.

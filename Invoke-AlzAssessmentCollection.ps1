@@ -1,3 +1,5 @@
+#requires -Version 7.3
+
 [CmdletBinding()]
 param(
     [AllowEmptyCollection()][string[]]$SubscriptionId = @(),

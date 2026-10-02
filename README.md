@@ -2,7 +2,7 @@
 
 This PowerShell suite collects read-only evidence for the ALZ, WAF, WARA, and Security/WASA assessment plan. It runs in a fixed sequence and writes JSON evidence, an error register, logs, and a SHA-256 evidence index.
 
-[![Validate](https://github.com/odayalulabi_microsoft/AzureLandingZoneAssessmentCollector/actions/workflows/validate.yml/badge.svg)](https://github.com/odayalulabi_microsoft/AzureLandingZoneAssessmentCollector/actions/workflows/validate.yml)
+[![Validate](https://github.com/OdayAlUlabi/ALZAssess/actions/workflows/validate.yml/badge.svg)](https://github.com/OdayAlUlabi/ALZAssess/actions/workflows/validate.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > [!IMPORTANT]
@@ -43,12 +43,14 @@ Copy `workloads.example.json`, then define three to five representative workload
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
-.\Invoke-AlzAssessmentCollection.ps1 `
+pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
   -SubscriptionId '11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222' `
   -WorkloadConfigPath '.\workloads.json' `
   -Profile Standard `
   -OutputPath '.\output\assessment-2026-10-02'
 ```
+
+Use `pwsh`, not Windows PowerShell (`powershell.exe`). `ConvertFrom-Json` and other collector operations require PowerShell 7.3 or later.
 
 Omit `-SubscriptionId` to collect all enabled subscriptions visible to the signed-in identity.
 

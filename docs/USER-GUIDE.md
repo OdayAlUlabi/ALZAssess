@@ -27,6 +27,8 @@ az version
 az account show
 ```
 
+Run the collector with `pwsh`. Windows PowerShell 5.1 (`powershell.exe`) is not supported.
+
 If authentication is required:
 
 ```powershell

@@ -1,6 +1,10 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if ($PSVersionTable.PSVersion -lt [version]'7.3') {
+    throw "PowerShell 7.3 or later is required. Current version: $($PSVersionTable.PSVersion). Run the collector with 'pwsh', not 'powershell.exe'."
+}
+
 function Initialize-CollectionContext {
     param(
         [Parameter(Mandatory)][string]$OutputRoot,

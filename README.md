@@ -13,6 +13,7 @@ This PowerShell suite collects read-only evidence for the ALZ, WAF, WARA, and Se
 - [User guide](docs/USER-GUIDE.md): installation, configuration, profiles, execution, and resume procedures.
 - [Technical reference](docs/TECHNICAL-REFERENCE.md): architecture, parameters, stages, APIs, retry behavior, and exit handling.
 - [Evidence catalog](docs/EVIDENCE-CATALOG.md): every evidence area, output, assessment mapping, and interpretation guidance.
+- [Reporting guide](docs/REPORTING.md): generate the HTML dashboard, CSV exports, and observation register.
 - [Security and permissions](docs/SECURITY-AND-PERMISSIONS.md): least privilege, Microsoft Graph permissions, sensitive-data handling, and retention.
 - [Troubleshooting and operations](docs/TROUBLESHOOTING.md): common failures, recovery procedures, performance guidance, and operational runbook.
 
@@ -125,6 +126,23 @@ For large estates, start with `Standard`. Use `Full` only when per-resource diag
 ```
 
 Each completed stage writes `_stage-NN.complete.json` with its duration. Reusing the same output path with `-Resume` avoids recollecting completed stages after a transient failure.
+
+## Generate the assessment report
+
+After collection and evidence indexing:
+
+```powershell
+pwsh -File .\New-AlzAssessmentReport.ps1 `
+  -EvidencePath '.\output\full-platform-assessment'
+```
+
+Open the generated dashboard:
+
+```powershell
+Start-Process '.\output\full-platform-assessment\reports\assessment-report.html'
+```
+
+The report directory includes the HTML dashboard, report metadata, complete CSV inventory exports, and an automated observation register. Observations are review candidates and must be validated before they become formal assessment findings.
 
 ## Sequence
 

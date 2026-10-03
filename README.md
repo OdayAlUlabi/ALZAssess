@@ -44,14 +44,19 @@ Copy `workloads.example.json`, then define three to five representative workload
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
-pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
-  -SubscriptionId '11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222' `
+$subscriptionIds = @(
+  '11111111-1111-1111-1111-111111111111'
+  '22222222-2222-2222-2222-222222222222'
+)
+
+& '.\Invoke-AlzAssessmentCollection.ps1' `
+  -SubscriptionId $subscriptionIds `
   -WorkloadConfigPath '.\workloads.json' `
   -Profile Standard `
   -OutputPath '.\output\assessment-2026-10-02'
 ```
 
-Use `pwsh`, not Windows PowerShell (`powershell.exe`). `ConvertFrom-Json` and other collector operations require PowerShell 7.3 or later.
+Use PowerShell 7 (`pwsh`), not Windows PowerShell (`powershell.exe`). Invoke the script directly with `&` from the PowerShell 7 session. Do not pass a subscription array through a nested `pwsh -File` command because the additional IDs can be interpreted as positional arguments.
 
 Omit `-SubscriptionId` to collect all enabled subscriptions visible to the signed-in identity.
 
@@ -142,6 +147,31 @@ Write-Host "Enabled subscriptions in scope: $($subscriptions.Count)" -Foreground
 
 Stop here if the tenant or subscription list is not the approved assessment scope.
 
+#### Optional: restrict collection to selected subscriptions
+
+Define the approved subscription IDs:
+
+```powershell
+$subscriptionIds = @(
+  '11111111-1111-1111-1111-111111111111'
+  '22222222-2222-2222-2222-222222222222'
+)
+
+$visibleSubscriptionIds = @($subscriptions.Id)
+$missingSubscriptions = @(
+  $subscriptionIds |
+    Where-Object { $_ -notin $visibleSubscriptionIds }
+)
+
+if ($missingSubscriptions.Count -gt 0) {
+  throw "Subscriptions are not visible or enabled: $($missingSubscriptions -join ', ')"
+}
+
+Write-Host "Validated $($subscriptionIds.Count) selected subscriptions." -ForegroundColor Green
+```
+
+Add `-SubscriptionId $subscriptionIds` to the stage 0–8 collection and resume commands below. Omit the parameter only when every visible enabled subscription is intentionally in scope.
+
 ### Step 4: Create a dated evidence directory
 
 ```powershell
@@ -159,7 +189,7 @@ Keep `$outputPath` in the same PowerShell session for the remaining steps.
 Workload-specific stage 9 is intentionally excluded until workloads are identified.
 
 ```powershell
-pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
+& '.\Invoke-AlzAssessmentCollection.ps1' `
   -Profile Full `
   -StartAtStage 0 `
   -EndAtStage 8 `
@@ -169,7 +199,7 @@ pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
 To resume an interrupted collection, use the same output path:
 
 ```powershell
-pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
+& '.\Invoke-AlzAssessmentCollection.ps1' `
   -Profile Full `
   -StartAtStage 0 `
   -EndAtStage 8 `
@@ -224,7 +254,7 @@ An empty or missing evidence file is not proof of compliance. Resolve required p
 ### Step 7: Build and validate the evidence index
 
 ```powershell
-pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
+& '.\Invoke-AlzAssessmentCollection.ps1' `
   -StartAtStage 10 `
   -EndAtStage 10 `
   -OutputPath $outputPath
@@ -241,7 +271,7 @@ Write-Host "Indexed evidence files: $($evidenceIndex.Count)" -ForegroundColor Gr
 ### Step 8: Generate the HTML dashboard and CSV exports
 
 ```powershell
-pwsh -NoProfile -File '.\New-AlzAssessmentReport.ps1' `
+& '.\New-AlzAssessmentReport.ps1' `
   -EvidencePath $outputPath `
   -Top 25
 ```
@@ -288,13 +318,13 @@ After reviewing the inventory, work with platform and application owners to iden
 Copy-Item '.\workloads.example.json' '.\workloads.json'
 notepad '.\workloads.json'
 
-pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
+& '.\Invoke-AlzAssessmentCollection.ps1' `
   -WorkloadConfigPath '.\workloads.json' `
   -StartAtStage 9 `
   -EndAtStage 10 `
   -OutputPath $outputPath
 
-pwsh -NoProfile -File '.\New-AlzAssessmentReport.ps1' `
+& '.\New-AlzAssessmentReport.ps1' `
   -EvidencePath $outputPath `
   -Top 25
 ```
@@ -327,7 +357,7 @@ Each completed stage writes `_stage-NN.complete.json` with its duration. Reusing
 After collection and evidence indexing:
 
 ```powershell
-pwsh -File .\New-AlzAssessmentReport.ps1 `
+& '.\New-AlzAssessmentReport.ps1' `
   -EvidencePath '.\output\full-platform-assessment'
 ```
 

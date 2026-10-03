@@ -32,10 +32,17 @@ output\full-platform-assessment\reports\
     ├── collection-error-summary.csv
     ├── defender-assessments.csv
     ├── diagnostic-settings-unsupported-resources.csv
+    ├── expressroute-circuits.csv
+    ├── network-best-practice-findings.csv
+    ├── network-connections.csv
+    ├── network-gateways.csv
+    ├── network-routes.csv
+    ├── network-security-rules.csv
     ├── policy-compliance-summary.csv
     ├── public-ip-addresses.csv
     ├── resource-inventory.csv
-    └── subscription-summary.csv
+    ├── subscription-summary.csv
+    └── vnet-peerings.csv
 ```
 
 Open the HTML report:
@@ -101,6 +108,27 @@ CSV files retain the complete exported dataset.
 - Resources whose types do not support diagnostic settings
 - Backup and Site Recovery resources
 - Advisor cost recommendations
+- Custom NSG rules and UDRs
+- VPN/ExpressRoute gateways and connections
+- ExpressRoute circuits and VNet peerings
+- Network best-practice review candidates
+
+### Network best-practice review
+
+`network-best-practice-findings.csv` contains resource-level review candidates for:
+
+- Broad inbound NSG allow rules
+- SSH, RDP, or WinRM exposure from broad sources
+- Subnets without NSG associations, excluding platform subnets that should not use NSGs
+- Direct-Internet default UDRs
+- Virtual-appliance UDRs without next-hop IPs
+- VPN active-active, AZ SKU, and Basic SKU indicators
+- Hybrid connections that are not connected
+- ExpressRoute provisioning state and single-circuit resiliency
+- VNet peerings that are not connected
+- Missing or disabled flow logs when the new flow-log evidence file was collected
+
+These checks use configuration evidence. Validate effective routes, effective NIC-level NSG rules, runtime traffic, approved exceptions, provider diversity, and tested failover before confirming findings.
 
 ## Automated observations
 

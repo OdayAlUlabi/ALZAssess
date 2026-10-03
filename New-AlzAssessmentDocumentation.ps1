@@ -129,6 +129,7 @@ $pages = @(
     [pscustomobject]@{ Slug = '93-rbac-appendix'; Title = 'Appendix: RBAC Assignments' }
     [pscustomobject]@{ Slug = '94-collection-errors-appendix'; Title = 'Appendix: Collection Errors' }
     [pscustomobject]@{ Slug = '95-evidence-index-appendix'; Title = 'Appendix: Evidence Index' }
+    [pscustomobject]@{ Slug = '96-network-findings-appendix'; Title = 'Appendix: Network Best-Practice Findings' }
 )
 
 $navigationHtml = ($pages | ForEach-Object {
@@ -233,6 +234,13 @@ $resourceHealth = @(Get-JsonItems '07-resilience\resource-health.json' -Optional
 $advisorCost = @(Get-JsonItems '08-cost-optimization\advisor-cost.json' -Optional)
 $orphanCandidates = @(Get-JsonItems '08-cost-optimization\potential-orphan-resources.json' -Optional)
 $observations = @(Get-CsvItems 'reports\csv\assessment-observations.csv')
+$networkFindings = @(Get-CsvItems 'reports\csv\network-best-practice-findings.csv')
+$networkSecurityRules = @(Get-CsvItems 'reports\csv\network-security-rules.csv')
+$networkRoutes = @(Get-CsvItems 'reports\csv\network-routes.csv')
+$networkGateways = @(Get-CsvItems 'reports\csv\network-gateways.csv')
+$networkConnections = @(Get-CsvItems 'reports\csv\network-connections.csv')
+$expressRouteCircuits = @(Get-CsvItems 'reports\csv\expressroute-circuits.csv')
+$vnetPeerings = @(Get-CsvItems 'reports\csv\vnet-peerings.csv')
 $collectionErrors = @(Get-CsvItems '_collection-errors.csv')
 $evidenceIndex = @(Get-CsvItems '10-evidence-index\evidence-index.csv')
 
@@ -471,9 +479,88 @@ $networkBody = @"
 $(New-MetricList ([ordered]@{
     'Network resources' = $networkResources.Count
     'VNet/subnet records' = $vnets.Count
+    'Custom NSG rules' = $networkSecurityRules.Count
+    'Custom routes' = $networkRoutes.Count
+    'VNet peerings' = $vnetPeerings.Count
+    'VPN/ER gateways' = $networkGateways.Count
+    'VPN/ER connections' = $networkConnections.Count
+    'ExpressRoute circuits' = $expressRouteCircuits.Count
     'Public IP addresses' = $publicIps.Count
     'Private Endpoints' = $privateEndpoints.Count
+    'Network best-practice review candidates' = $networkFindings.Count
 }))
+
+## Best-practice review candidates
+
+$(New-MarkdownTable $networkFindings ([ordered]@{
+    'Check' = { param($r) $r.CheckId }
+    'Priority' = { param($r) $r.SuggestedPriority }
+    'Category' = { param($r) $r.Category }
+    'Finding' = { param($r) $r.Finding }
+    'Resource' = { param($r) $r.ResourceName }
+    'Detail' = { param($r) $r.Detail }
+    'Recommendation' = { param($r) $r.Recommendation }
+}) -Limit $Top -EmptyMessage 'No automated network review candidates were identified from the collected configuration.')
+
+See [Network Best-Practice Findings Appendix](96-network-findings-appendix.md) for the complete finding register.
+
+## Network Security Group rules
+
+$(New-MarkdownTable $networkSecurityRules ([ordered]@{
+    'NSG' = { param($r) $r.NsgName }
+    'Rule' = { param($r) $r.RuleName }
+    'Priority' = { param($r) $r.Priority }
+    'Direction' = { param($r) $r.Direction }
+    'Access' = { param($r) $r.Access }
+    'Sources' = { param($r) $r.SourceAddresses }
+    'Destinations' = { param($r) $r.Destinations }
+    'Ports' = { param($r) $r.DestinationPorts }
+}) -Limit $Top)
+
+## Route tables and UDRs
+
+$(New-MarkdownTable $networkRoutes ([ordered]@{
+    'Route table' = { param($r) $r.RouteTableName }
+    'Route' = { param($r) $r.RouteName }
+    'Prefix' = { param($r) $r.AddressPrefix }
+    'Next hop' = { param($r) $r.NextHopType }
+    'Next-hop IP' = { param($r) $r.NextHopIpAddress }
+    'BGP propagation disabled' = { param($r) $r.DisableBgpRoutePropagation }
+}) -Limit $Top)
+
+## VPN and ExpressRoute gateways
+
+$(New-MarkdownTable $networkGateways ([ordered]@{
+    'Gateway' = { param($r) $r.Name }
+    'Region' = { param($r) $r.Location }
+    'Type' = { param($r) $r.GatewayType }
+    'VPN type' = { param($r) $r.VpnType }
+    'SKU' = { param($r) $r.Sku }
+    'Active-active' = { param($r) $r.ActiveActive }
+    'BGP enabled' = { param($r) $r.EnableBgp }
+    'Generation' = { param($r) $r.Generation }
+}) -Limit $Top)
+
+## Hybrid connections
+
+$(New-MarkdownTable $networkConnections ([ordered]@{
+    'Connection' = { param($r) $r.Name }
+    'Region' = { param($r) $r.Location }
+    'Type' = { param($r) $r.ConnectionType }
+    'Status' = { param($r) $r.ConnectionStatus }
+    'BGP enabled' = { param($r) $r.EnableBgp }
+}) -Limit $Top)
+
+## ExpressRoute circuits
+
+$(New-MarkdownTable $expressRouteCircuits ([ordered]@{
+    'Circuit' = { param($r) $r.Name }
+    'Region' = { param($r) $r.Location }
+    'Tier' = { param($r) $r.Tier }
+    'Bandwidth Mbps' = { param($r) $r.BandwidthMbps }
+    'Circuit state' = { param($r) $r.CircuitState }
+    'Provider state' = { param($r) $r.ProviderState }
+}) -Limit $Top)
 
 ## Public IP addresses
 
@@ -494,6 +581,8 @@ $(New-MarkdownTable $regions ([ordered]@{
 }) -Limit $Top)
 
 Configuration evidence supports current-state topology modeling. Runtime traffic flows and application dependencies require flow logs, distributed tracing, and stakeholder validation.
+
+The automated checks cover broad inbound NSG rules, exposed management ports, subnet NSG associations, direct-Internet default UDRs, incomplete virtual-appliance routes, VPN gateway availability/SKU indicators, disconnected hybrid connections, ExpressRoute provisioning and circuit-count indicators, VNet peering state, and flow-log availability. Effective routes, effective NIC-level security rules, observed traffic, provider diversity, and tested failover still require runtime validation.
 "@
 Write-DocumentationPage '06-network' 'Network Architecture' $networkBody
 
@@ -717,6 +806,22 @@ $(New-MarkdownTable $evidenceIndex ([ordered]@{
 }))
 "@
 
+Write-DocumentationPage '96-network-findings-appendix' 'Appendix: Network Best-Practice Findings' @"
+> These are configuration-based review candidates. Confirm intent, effective routes and rules, observed traffic, exceptions, compensating controls, business impact, and tested failover before assigning final severity.
+
+$(New-MarkdownTable $networkFindings ([ordered]@{
+    'Check' = { param($r) $r.CheckId }
+    'Suggested priority' = { param($r) $r.SuggestedPriority }
+    'Category' = { param($r) $r.Category }
+    'Finding' = { param($r) $r.Finding }
+    'Resource' = { param($r) $r.ResourceName }
+    'Detail' = { param($r) $r.Detail }
+    'Recommendation' = { param($r) $r.Recommendation }
+    'Evidence' = { param($r) $r.Evidence }
+    'Status' = { param($r) $r.Status }
+}))
+"@
+
 $metadata = [ordered]@{
     GeneratedUtc = $generatedUtc
     EvidencePath = $evidenceRoot
@@ -727,6 +832,7 @@ $metadata = [ordered]@{
     Subscriptions = $effectiveSubscriptionIds.Count
     Resources = $resources.Count
     ReviewCandidates = $observations.Count
+    NetworkReviewCandidates = $networkFindings.Count
     EntryPoint = Join-Path $htmlRoot 'index.html'
 }
 ConvertTo-Json -InputObject $metadata -Depth 10 |

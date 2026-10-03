@@ -39,12 +39,12 @@ documentation\
 │   ├── index.html
 │   ├── 01-executive-summary.html
 │   ├── ...
-│   └── 95-evidence-index-appendix.html
+│   └── 96-network-findings-appendix.html
 └── markdown\
     ├── index.md
     ├── 01-executive-summary.md
     ├── ...
-    └── 95-evidence-index-appendix.md
+    └── 96-network-findings-appendix.md
 ```
 
 ## Chapters
@@ -70,6 +70,9 @@ documentation\
 - Azure RBAC assignments
 - Collection errors
 - Evidence index and SHA-256 hashes
+- Complete network best-practice finding register
+
+The Network Architecture chapter also includes normalized NSG rules, UDRs, VPN/ExpressRoute gateways, hybrid connections, ExpressRoute circuits, and the associated automated review candidates.
 
 ## Important limitations
 

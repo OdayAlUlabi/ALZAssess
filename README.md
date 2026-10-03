@@ -390,7 +390,7 @@ The generated documentation includes executive, scope, platform, governance, ide
 2. `01-TenantHierarchy.ps1`: tenants, management groups, subscriptions, and resource groups.
 3. `02-ResourceGovernance.ps1`: inventory, regions, SKUs, state, tags, Policy, exemptions, compliance, and locks.
 4. `03-Identity.ps1`: RBAC, managed identities, privileged directory roles, PIM eligibility, Conditional Access, applications, and service principal credential metadata.
-5. `04-Network.ps1`: VNets, subnets, peerings, NSGs, routes, public IPs, Private Endpoints, Firewall, ER/VPN, DNS, vWAN, and DDoS.
+5. `04-Network.ps1`: VNets, subnets, peerings, normalized NSG rules and UDRs, public IPs, Private Endpoints, Firewall, ER/VPN gateways and connections, ExpressRoute circuits, flow logs, DNS, vWAN, and DDoS. Report generation evaluates configuration-based network best-practice review candidates.
 6. `05-Security.ps1`: Defender plans, assessments, Key Vault configuration, and public-network configuration.
 7. `06-Operations.ps1`: Log Analytics, Azure Monitor, alerts, action groups, DCRs, Sentinel, Automation, Maintenance, and diagnostic settings.
 8. `07-Resilience.ps1`: Backup, ASR, Data Protection, availability configuration, Advisor reliability, and Resource Health.

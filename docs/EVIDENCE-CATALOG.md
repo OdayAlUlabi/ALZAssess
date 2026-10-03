@@ -119,6 +119,11 @@ Directory: `04-network`
 | `vnets-subnets.json` | Address spaces, custom DNS, subnets, NSGs, routes, and Private Endpoint policies |
 | `public-ip-addresses.json` | Public IP allocation, association, DNS, zones, and DDoS settings |
 | `private-endpoints.json` | Private Endpoint configuration |
+| `network-security-rules.json` | Normalized custom NSG rules, prefixes, protocols, ports, direction, access, and priority |
+| `route-table-routes.json` | Normalized UDRs, next hops, next-hop IPs, and BGP propagation settings |
+| `vnet-peerings.json` | VNet peering state, remote VNet, forwarded traffic, and gateway-transit settings |
+| `hybrid-connectivity.json` | VPN/ExpressRoute gateways, connections, circuits, local gateways, vWANs, and virtual hubs |
+| `network-flow-logs.json` | Network flow-log targets, enabled state, storage, retention, and Traffic Analytics configuration |
 | `network-topology.json` | VNets, peerings, vWAN, ExpressRoute, VPN, Firewall, routes, NSGs, private DNS, resolvers, and DDoS plans |
 
 Assessment mapping:
@@ -132,8 +137,14 @@ Assessment mapping:
 - DNS architecture
 - ExpressRoute and VPN connectivity
 - DDoS protection
+- Broad inbound NSG access and management-port exposure
+- Subnet NSG associations
+- Direct-Internet and incomplete virtual-appliance UDRs
+- VPN gateway availability and SKU indicators
+- Hybrid connection, ExpressRoute provisioning, and VNet peering state
+- Flow-log availability
 
-The evidence supports a topology model but does not generate the final diagram.
+The report generator converts these configuration indicators into review candidates. Effective routes, effective NIC-level NSG rules, observed flows, provider diversity, and tested failover still require runtime validation.
 
 ## 7. Stage 05: Security
 

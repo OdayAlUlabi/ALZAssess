@@ -14,6 +14,7 @@ This PowerShell suite collects read-only evidence for the ALZ, WAF, WARA, and Se
 - [Technical reference](docs/TECHNICAL-REFERENCE.md): architecture, parameters, stages, APIs, retry behavior, and exit handling.
 - [Evidence catalog](docs/EVIDENCE-CATALOG.md): every evidence area, output, assessment mapping, and interpretation guidance.
 - [Reporting guide](docs/REPORTING.md): generate the HTML dashboard, CSV exports, and observation register.
+- [Documentation generation](docs/DOCUMENTATION-GENERATION.md): generate a complete offline HTML documentation site and matching Markdown source.
 - [Security and permissions](docs/SECURITY-AND-PERMISSIONS.md): least privilege, Microsoft Graph permissions, sensitive-data handling, and retention.
 - [Troubleshooting and operations](docs/TROUBLESHOOTING.md): common failures, recovery procedures, performance guidance, and operational runbook.
 
@@ -368,6 +369,20 @@ Start-Process '.\output\full-platform-assessment\reports\assessment-report.html'
 ```
 
 The report directory includes the HTML dashboard, report metadata, complete CSV inventory exports, and an automated observation register. Observations are review candidates and must be validated before they become formal assessment findings.
+
+## Generate complete assessment documentation
+
+Generate a navigable offline HTML site and matching Markdown chapters from an evidence directory:
+
+```powershell
+& '.\New-AlzAssessmentDocumentation.ps1' `
+  -EvidencePath '.\output\full-platform-assessment' `
+  -Top 25
+
+Start-Process '.\output\full-platform-assessment\documentation\html\index.html'
+```
+
+The generated documentation includes executive, scope, platform, governance, identity, network, security, operations, resilience, cost, workload-status, and next-step chapters. Detailed appendices contain subscription, resource, Defender, RBAC, collection-error, and evidence-index records.
 
 ## Sequence
 

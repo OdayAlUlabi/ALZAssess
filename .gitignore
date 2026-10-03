@@ -3,6 +3,8 @@ output/
 **/output/
 reports/
 **/reports/
+documentation/
+**/documentation/
 
 # Local workload definitions can contain business and ownership data.
 workloads.json

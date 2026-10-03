@@ -197,6 +197,20 @@ Resolution:
   -OutputPath '.\output\critical-diagnostics'
 ```
 
+### Resource type does not support diagnostic settings
+
+Azure does not expose diagnostic settings for every resource type. Examples include some alert resources, action groups, restore point collections, and Network Watcher resources.
+
+The collector records these resources in:
+
+```text
+06-operations\resource-diagnostic-settings-unsupported.json
+```
+
+They are informational coverage records and are not written to `_collection-errors.csv`. The collector also caches unsupported types during the run so it does not repeat the same failing API request for every resource of that type.
+
+If an older collector version recorded `ResourceTypeNotSupported` as an error, update the repository and rerun stage 6 into a new output directory, or remove the existing stage 6 completion marker and stale stage 6 error rows before resuming.
+
 ## 9. Empty output
 
 Do not assume an empty JSON array means no gap exists.

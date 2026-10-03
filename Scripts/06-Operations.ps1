@@ -47,12 +47,37 @@ if (-not $SkipPerResourceDiagnostics) {
         Add-CollectionError -Stage $stage -Item 'per-resource-diagnostic-settings' -Message "Required inventory not found: $resourceInventoryPath"
     }
     else {
-        $resources = Get-Content -LiteralPath $resourceInventoryPath -Raw | ConvertFrom-Json -Depth 100 -NoEnumerate
+        $resources = @(Get-Content -LiteralPath $resourceInventoryPath -Raw | ConvertFrom-Json -Depth 100)
         $diagnostics = [System.Collections.Generic.List[object]]::new()
+        $unsupportedResources = [System.Collections.Generic.List[object]]::new()
+        $unsupportedTypes = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
         foreach ($resource in $resources) {
+            $resourceType = if ($resource.type) { [string]$resource.type } else { '<unknown>' }
+            if ($unsupportedTypes.Contains($resourceType)) {
+                $unsupportedResources.Add([pscustomobject]@{
+                    resourceId = $resource.id
+                    type       = $resourceType
+                    reason     = 'ResourceTypeNotSupported'
+                })
+                continue
+            }
+
             $output = & az monitor diagnostic-settings list --resource $resource.id --only-show-errors --output json 2>&1
             if ($LASTEXITCODE -ne 0) {
-                Add-CollectionError -Stage $stage -Item "diagnostic-settings/$($resource.id)" -Message ($output -join [Environment]::NewLine)
+                $message = $output -join [Environment]::NewLine
+                if ($message -match 'ResourceTypeNotSupported|does not support diagnostic settings') {
+                    $unsupportedTypes.Add($resourceType) | Out-Null
+                    $unsupportedResources.Add([pscustomobject]@{
+                        resourceId = $resource.id
+                        type       = $resourceType
+                        reason     = 'ResourceTypeNotSupported'
+                    })
+                    Write-CollectionLog -Level INFO -Message "Skipping unsupported diagnostic-settings type: $resourceType"
+                    continue
+                }
+
+                Add-CollectionError -Stage $stage -Item "diagnostic-settings/$($resource.id)" -Message $message
                 continue
             }
             try {
@@ -68,6 +93,10 @@ if (-not $SkipPerResourceDiagnostics) {
         }
         Save-Json -Data $diagnostics.ToArray() `
             -Path (Get-StageOutputPath -Stage $stage -FileName 'resource-diagnostic-settings.json')
+        Save-Json -Data $unsupportedResources.ToArray() `
+            -Path (Get-StageOutputPath -Stage $stage -FileName 'resource-diagnostic-settings-unsupported.json')
+
+        Write-CollectionLog -Level INFO -Message "Collected diagnostic settings for $($diagnostics.Count) resources; $($unsupportedResources.Count) resources across $($unsupportedTypes.Count) types do not support diagnostic settings."
     }
 }
 else {

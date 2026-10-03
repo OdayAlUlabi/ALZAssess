@@ -125,6 +125,7 @@ $privateEndpoints = @(Get-JsonItems -RelativePath '04-network\private-endpoints.
 $defenderAssessments = @(Get-JsonItems -RelativePath '05-security\defender-assessments.json' -Optional)
 $keyVaults = @(Get-JsonItems -RelativePath '05-security\key-vaults.json' -Optional)
 $operationsResources = @(Get-JsonItems -RelativePath '06-operations\operations-resources.json' -Optional)
+$unsupportedDiagnostics = @(Get-JsonItems -RelativePath '06-operations\resource-diagnostic-settings-unsupported.json' -Optional)
 $backupResources = @(Get-JsonItems -RelativePath '07-resilience\backup-site-recovery.json' -Optional)
 $advisorReliability = @(Get-JsonItems -RelativePath '07-resilience\advisor-reliability.json' -Optional)
 $advisorCost = @(Get-JsonItems -RelativePath '08-cost-optimization\advisor-cost.json' -Optional)
@@ -219,6 +220,10 @@ $publicIpExport = foreach ($item in $publicIps) {
     }
 }
 $publicIpExport | Export-Csv -LiteralPath (Join-Path $csvRoot 'public-ip-addresses.csv') -NoTypeInformation -Encoding utf8
+
+$unsupportedDiagnostics |
+    Select-Object resourceId, type, reason |
+    Export-Csv -LiteralPath (Join-Path $csvRoot 'diagnostic-settings-unsupported-resources.csv') -NoTypeInformation -Encoding utf8
 
 $advisorCost | Select-Object subscriptionId, resourceId, impact, shortDescription, recommendationTypeId |
     Export-Csv -LiteralPath (Join-Path $csvRoot 'advisor-cost-recommendations.csv') -NoTypeInformation -Encoding utf8
@@ -449,6 +454,7 @@ footer { color:#667085; text-align:center; padding:20px; }
       <div class="card"><div class="value">$($privateEndpoints.Count)</div><div class="label">Private Endpoints</div></div>
       <div class="card"><div class="value">$($keyVaults.Count)</div><div class="label">Key Vaults</div></div>
       <div class="card"><div class="value">$($operationsResources.Count)</div><div class="label">Operations resources</div></div>
+      <div class="card"><div class="value">$($unsupportedDiagnostics.Count)</div><div class="label">Resources without diagnostic-settings support</div></div>
       <div class="card"><div class="value">$($backupResources.Count)</div><div class="label">Backup/ASR resources</div></div>
       <div class="card"><div class="value">$($advisorCost.Count)</div><div class="label">Advisor cost recommendations</div></div>
     </div>
@@ -464,6 +470,7 @@ footer { color:#667085; text-align:center; padding:20px; }
       <li><code>csv/policy-compliance-summary.csv</code></li>
       <li><code>csv/defender-assessments.csv</code></li>
       <li><code>csv/public-ip-addresses.csv</code></li>
+      <li><code>csv/diagnostic-settings-unsupported-resources.csv</code></li>
       <li><code>csv/advisor-cost-recommendations.csv</code></li>
     </ul>
   </section>

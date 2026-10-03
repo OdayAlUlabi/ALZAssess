@@ -167,6 +167,7 @@ Directory: `06-operations`
 | `alerts-action-groups-dcrs.json` | Alert rules, action groups, and data collection rules/endpoints |
 | `subscription-diagnostic-settings-<subscription>.json` | Subscription Activity Log diagnostic settings |
 | `resource-diagnostic-settings.json` | Diagnostic settings for each resource; Full profile only |
+| `resource-diagnostic-settings-unsupported.json` | Resources whose Azure resource type does not support diagnostic settings; informational, not a collection failure |
 
 Assessment mapping:
 

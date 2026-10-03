@@ -31,6 +31,7 @@ output\full-platform-assessment\reports\
     ├── assessment-observations.csv
     ├── collection-error-summary.csv
     ├── defender-assessments.csv
+    ├── diagnostic-settings-unsupported-resources.csv
     ├── policy-compliance-summary.csv
     ├── public-ip-addresses.csv
     ├── resource-inventory.csv
@@ -97,6 +98,7 @@ CSV files retain the complete exported dataset.
 - Private Endpoints
 - Key Vaults
 - Operations resources
+- Resources whose types do not support diagnostic settings
 - Backup and Site Recovery resources
 - Advisor cost recommendations
 

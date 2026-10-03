@@ -201,13 +201,15 @@ Resolution:
 
 Azure does not expose diagnostic settings for every resource type. Examples include some alert resources, action groups, restore point collections, and Network Watcher resources.
 
-The collector records these resources in:
+The collector preloads known unsupported types and records these resources without calling the diagnostic-settings API:
 
 ```text
 06-operations\resource-diagnostic-settings-unsupported.json
 ```
 
-They are informational coverage records and are not written to `_collection-errors.csv`. The collector also caches unsupported types during the run so it does not repeat the same failing API request for every resource of that type.
+They are informational coverage records and are not written to `_collection-errors.csv`. If Azure returns `ResourceTypeNotSupported` for an additional type, the collector dynamically caches it for the rest of the run.
+
+Per-resource requests use Azure Resource Manager REST rather than the Azure CLI diagnostic-settings command. This allows resource IDs containing characters such as parentheses, including Operations Management solution names, to be processed without command-wrapper parsing errors.
 
 If an older collector version recorded `ResourceTypeNotSupported` as an error, update the repository and rerun stage 6 into a new output directory, or remove the existing stage 6 completion marker and stale stage 6 error rows before resuming.
 

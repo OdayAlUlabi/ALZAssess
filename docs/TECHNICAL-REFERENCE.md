@@ -111,6 +111,16 @@ The explicit skip switches can suppress data from any profile.
 - Does not retry permanent 4xx authorization failures.
 - Removes certificate `key` and password `secretText` fields in credential-metadata mode.
 
+### Resource diagnostic settings
+
+Full-profile per-resource diagnostic collection:
+
+- Preloads a registry of resource types known not to support diagnostic settings.
+- Records those resources without making an unsupported API request.
+- Uses direct authenticated Azure Resource Manager REST requests for other resources.
+- Avoids Azure CLI command-wrapper parsing problems for resource IDs containing characters such as parentheses.
+- Dynamically caches any additional resource type that returns `ResourceTypeNotSupported`.
+
 ### Error handling
 
 Independent optional failures are logged and collection continues. Required failures stop the current run.

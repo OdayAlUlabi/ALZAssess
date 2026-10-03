@@ -55,53 +55,248 @@ Use `pwsh`, not Windows PowerShell (`powershell.exe`). `ConvertFrom-Json` and ot
 
 Omit `-SubscriptionId` to collect all enabled subscriptions visible to the signed-in identity.
 
-## Full assessment when workloads are not known
+## End-to-end Full assessment when workloads are not known
 
-If workloads have not yet been identified, collect the tenant and platform baseline first. Run stages 0 through 8, skip the workload-specific stage 9, and then run stage 10 to build the evidence index.
+Use this workflow to validate prerequisites, collect the tenant and platform baseline from all visible subscriptions, verify the evidence, build the evidence index, and generate the HTML and CSV reports.
 
-The following example runs the Full profile across all enabled subscriptions visible to the signed-in Azure CLI identity:
+Run every command from PowerShell 7 (`pwsh`) in the repository root.
+
+> [!WARNING]
+> Omitting `-SubscriptionId` includes every enabled subscription visible to the signed-in identity. Full mode queries diagnostic settings for every resource, so large estates can take several hours and generate sensitive evidence. Use an approved, access-controlled output location and never commit it to Git.
+
+### Step 1: Validate PowerShell, Azure CLI, and Git
 
 ```powershell
-$outputPath = '.\output\full-platform-assessment'
+if ($PSVersionTable.PSVersion -lt [version]'7.3') {
+  throw "PowerShell 7.3 or later is required. Current version: $($PSVersionTable.PSVersion)"
+}
 
-pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
+foreach ($command in 'az','git') {
+  if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
+    throw "Required command '$command' was not found in PATH."
+  }
+}
+
+Write-Host "PowerShell: $($PSVersionTable.PSVersion)" -ForegroundColor Green
+Write-Host "Azure CLI: $(az version --query '"azure-cli"' --output tsv)" -ForegroundColor Green
+Write-Host "Git: $(git --version)" -ForegroundColor Green
+```
+
+### Step 2: Validate the collector
+
+```powershell
+$requiredFiles = @(
+  '.\Invoke-AlzAssessmentCollection.ps1'
+  '.\New-AlzAssessmentReport.ps1'
+  '.\Private\Common.ps1'
+  '.\Scripts\00-Prerequisites.ps1'
+  '.\Scripts\10-BuildEvidenceIndex.ps1'
+)
+
+$missingFiles = @($requiredFiles | Where-Object { -not (Test-Path -LiteralPath $_) })
+if ($missingFiles.Count -gt 0) {
+  throw "Required collector files are missing: $($missingFiles -join ', ')"
+}
+
+$parseErrors = @()
+Get-ChildItem -Filter '*.ps1' -Recurse |
+  Where-Object { $_.FullName -notlike '*\output\*' } |
+  ForEach-Object {
+    $tokens = $null
+    $fileErrors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+      $_.FullName,
+      [ref]$tokens,
+      [ref]$fileErrors
+    ) | Out-Null
+    $parseErrors += $fileErrors
+  }
+
+if ($parseErrors.Count -gt 0) {
+  $parseErrors | Format-List
+  throw 'PowerShell syntax validation failed.'
+}
+
+Write-Host 'Collector validation passed.' -ForegroundColor Green
+```
+
+### Step 3: Sign in and confirm the Azure scope
+
+```powershell
+az login
+
+az account show `
+  --query '{User:user.name,TenantId:tenantId,Subscription:name,SubscriptionId:id}' `
+  --output table
+
+$subscriptions = @(
+  az account list --all `
+    --query "[?state=='Enabled'].{Name:name,Id:id,TenantId:tenantId}" `
+    --output json |
+    ConvertFrom-Json
+)
+
+$subscriptions | Sort-Object Name | Format-Table Name, Id, TenantId -AutoSize
+Write-Host "Enabled subscriptions in scope: $($subscriptions.Count)" -ForegroundColor Cyan
+```
+
+Stop here if the tenant or subscription list is not the approved assessment scope.
+
+### Step 4: Create a dated evidence directory
+
+```powershell
+$assessmentDate = Get-Date -Format 'yyyyMMdd-HHmmss'
+$outputPath = Join-Path (Get-Location) "output\full-platform-assessment-$assessmentDate"
+New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
+
+Write-Host "Evidence path: $outputPath" -ForegroundColor Cyan
+```
+
+Keep `$outputPath` in the same PowerShell session for the remaining steps.
+
+### Step 5: Collect stages 0 through 8
+
+Workload-specific stage 9 is intentionally excluded until workloads are identified.
+
+```powershell
+pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
+  -Profile Full `
+  -StartAtStage 0 `
+  -EndAtStage 8 `
+  -OutputPath $outputPath
+```
+
+To resume an interrupted collection, use the same output path:
+
+```powershell
+pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
   -Profile Full `
   -StartAtStage 0 `
   -EndAtStage 8 `
   -OutputPath $outputPath `
-  -FailOnCollectionError
-
-pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
-  -StartAtStage 10 `
-  -EndAtStage 10 `
-  -OutputPath $outputPath
-```
-
-To resume stages 0 through 8 after an interruption, use the same output path:
-
-```powershell
-pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
-  -Profile Full `
-  -StartAtStage 0 `
-  -EndAtStage 8 `
-  -OutputPath '.\output\full-platform-assessment' `
-  -FailOnCollectionError `
   -Resume
 ```
 
-> [!WARNING]
-> Omitting `-SubscriptionId` includes every enabled subscription visible to the signed-in identity. Full mode also queries diagnostic settings for every resource, so large estates can take several hours and generate sensitive evidence. Use an approved, access-controlled output location.
+Use `-FailOnCollectionError` in automation when any optional evidence failure must return exit code 2. For interactive assessments, review the error register before deciding whether each gap blocks the assessment.
 
-After reviewing the inventory, work with platform and application owners to identify approximately three to five representative or critical workloads. Copy `workloads.example.json` to `workloads.json`, define those workload scopes, and then run stages 9 and 10:
+### Step 6: Validate stages and review errors
+
+```powershell
+$stageStatus = foreach ($stage in 0..8) {
+  $marker = Join-Path $outputPath ('_stage-{0:D2}.complete.json' -f $stage)
+  [pscustomobject]@{
+    Stage  = $stage
+    Status = if (Test-Path -LiteralPath $marker) { 'Completed' } else { 'Missing' }
+  }
+}
+
+$stageStatus | Format-Table -AutoSize
+
+$incompleteStages = @($stageStatus | Where-Object Status -ne 'Completed')
+if ($incompleteStages.Count -gt 0) {
+  Write-Warning "Incomplete stages: $($incompleteStages.Stage -join ', ')"
+}
+
+$errorPath = Join-Path $outputPath '_collection-errors.csv'
+if (Test-Path -LiteralPath $errorPath) {
+  $collectionErrors = @(Import-Csv -LiteralPath $errorPath)
+  Write-Host "Collection errors: $($collectionErrors.Count)" -ForegroundColor Yellow
+
+  $collectionErrors |
+    Group-Object Stage, Item |
+    ForEach-Object {
+      [pscustomobject]@{
+        Stage = $_.Group[0].Stage
+        Item  = $_.Group[0].Item
+        Count = $_.Count
+      }
+    } |
+    Sort-Object Count -Descending |
+    Format-Table -AutoSize
+}
+else {
+  Write-Host 'No collection errors were recorded.' -ForegroundColor Green
+}
+```
+
+An empty or missing evidence file is not proof of compliance. Resolve required permission or API failures, or record them as explicit assessment limitations.
+
+### Step 7: Build and validate the evidence index
+
+```powershell
+pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
+  -StartAtStage 10 `
+  -EndAtStage 10 `
+  -OutputPath $outputPath
+
+$indexPath = Join-Path $outputPath '10-evidence-index\evidence-index.csv'
+if (-not (Test-Path -LiteralPath $indexPath)) {
+  throw "Evidence index was not generated: $indexPath"
+}
+
+$evidenceIndex = @(Import-Csv -LiteralPath $indexPath)
+Write-Host "Indexed evidence files: $($evidenceIndex.Count)" -ForegroundColor Green
+```
+
+### Step 8: Generate the HTML dashboard and CSV exports
+
+```powershell
+pwsh -NoProfile -File '.\New-AlzAssessmentReport.ps1' `
+  -EvidencePath $outputPath `
+  -Top 25
+```
+
+### Step 9: Validate and open the report
+
+```powershell
+$reportPath = Join-Path $outputPath 'reports\assessment-report.html'
+$reportMetadataPath = Join-Path $outputPath 'reports\report-metadata.json'
+$observationPath = Join-Path $outputPath 'reports\csv\assessment-observations.csv'
+
+$missingReports = @(
+  @($reportPath, $reportMetadataPath, $observationPath) |
+    Where-Object { -not (Test-Path -LiteralPath $_) }
+)
+
+if ($missingReports.Count -gt 0) {
+  throw "Report generation is incomplete: $($missingReports -join ', ')"
+}
+
+$reportMetadata = Get-Content -LiteralPath $reportMetadataPath -Raw |
+  ConvertFrom-Json
+$reportMetadata | Format-List
+
+$observations = @(Import-Csv -LiteralPath $observationPath)
+Write-Host "Review candidates: $($observations.Count)" -ForegroundColor Yellow
+
+$observations |
+  Group-Object Area, SuggestedPriority |
+  Sort-Object Count -Descending |
+  Select-Object Count, Name |
+  Format-Table -AutoSize
+
+Start-Process $reportPath
+```
+
+Automated observations are review candidates, not confirmed findings. Validate evidence completeness, business criticality, control applicability, exceptions, compensating controls, ownership, and final severity.
+
+### Step 10: Add workloads later
+
+After reviewing the inventory, work with platform and application owners to identify approximately three to five representative or critical workloads:
 
 ```powershell
 Copy-Item '.\workloads.example.json' '.\workloads.json'
+notepad '.\workloads.json'
 
-pwsh -File .\Invoke-AlzAssessmentCollection.ps1 `
+pwsh -NoProfile -File '.\Invoke-AlzAssessmentCollection.ps1' `
   -WorkloadConfigPath '.\workloads.json' `
   -StartAtStage 9 `
   -EndAtStage 10 `
-  -OutputPath '.\output\full-platform-assessment'
+  -OutputPath $outputPath
+
+pwsh -NoProfile -File '.\New-AlzAssessmentReport.ps1' `
+  -EvidencePath $outputPath `
+  -Top 25
 ```
 
 Useful switches:

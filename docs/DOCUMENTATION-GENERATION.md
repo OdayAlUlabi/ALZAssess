@@ -35,6 +35,8 @@ Start-Process (Join-Path $evidencePath 'documentation\html\index.html')
 ```text
 documentation\
 ├── documentation-metadata.json
+├── network-topology.json
+├── network-disconnected-devices.csv
 ├── html\
 │   ├── index.html
 │   ├── 01-executive-summary.html
@@ -74,12 +76,27 @@ documentation\
 
 The Network Architecture chapter also includes normalized NSG rules, UDRs, VPN/ExpressRoute gateways, hybrid connections, ExpressRoute circuits, and the associated automated review candidates.
 
+### Network topology diagram
+
+The Network Architecture HTML page contains an offline SVG diagram generated from the evidence snapshot. It shows:
+
+- VNets and collected address spaces
+- VNet peerings whose state is `Connected`
+- Firewalls, gateways, Application Gateways, Bastion, NAT Gateways, Load Balancers, Private Endpoints, and VM NICs attached to collected subnets
+- Collected private and public IP addresses on each connected device
+- Remote connected VNets referenced by peerings but not otherwise present in the collected topology
+
+Disconnected peerings, unassociated Public IPs, devices without a resolvable VNet/subnet relationship, and references outside the collected topology are listed separately below the diagram and exported to `network-disconnected-devices.csv`.
+
+The underlying node and edge model is saved as `network-topology.json`. The diagram represents configuration relationships, not observed packet flow or a live reachability test.
+
 ## Important limitations
 
 Generated documentation describes the collected configuration evidence. It does not automatically establish:
 
 - Application-level dependencies
 - Runtime traffic flow
+- Effective routing, transitive reachability, and packet-level connectivity
 - Business processes
 - External SaaS dependencies
 - Unrepresented on-premises systems

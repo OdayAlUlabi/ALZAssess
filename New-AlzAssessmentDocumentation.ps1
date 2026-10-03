@@ -109,6 +109,432 @@ function New-MetricList {
     }) -join [Environment]::NewLine
 }
 
+function Get-DocPropertyValue {
+    param(
+        [AllowNull()]$InputObject,
+        [Parameter(Mandatory)][string]$Name,
+        [AllowNull()]$Default = $null
+    )
+
+    if ($null -eq $InputObject) {
+        return $Default
+    }
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return $Default
+    }
+    return $property.Value
+}
+
+function Get-NetworkResourceParentId {
+    param([AllowEmptyString()][string]$ChildResourceId)
+
+    if (-not $ChildResourceId) {
+        return ''
+    }
+    $segments = @($ChildResourceId -split '/' | Where-Object { $_ })
+    $providerIndex = [Array]::IndexOf($segments, 'providers')
+    if ($providerIndex -lt 0 -or $segments.Count -le ($providerIndex + 3)) {
+        return ''
+    }
+    return '/' + ($segments[0..($providerIndex + 3)] -join '/')
+}
+
+function Get-VnetIdFromSubnetId {
+    param([AllowEmptyString()][string]$SubnetId)
+
+    if ($SubnetId -match '^(.*?/virtualNetworks/[^/]+)/subnets/[^/]+$') {
+        return $Matches[1]
+    }
+    return ''
+}
+
+function Get-ResourceNameFromId {
+    param([AllowEmptyString()][string]$ResourceId)
+
+    if (-not $ResourceId) {
+        return ''
+    }
+    return ($ResourceId -split '/')[-1]
+}
+
+function New-NetworkTopologyModel {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$TopologyResources,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$AllNetworkResources,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PublicIpResources
+    )
+
+    $nodes = @{}
+    $edges = [System.Collections.Generic.List[object]]::new()
+    $disconnected = [System.Collections.Generic.List[object]]::new()
+    $publicIpById = @{}
+    $publicIpAssociation = @{}
+
+    foreach ($publicIp in $PublicIpResources) {
+        $publicIpById[[string]$publicIp.id] = $publicIp
+        $parentId = Get-NetworkResourceParentId ([string]$publicIp.ipConfigurationId)
+        if ($parentId) {
+            if (-not $publicIpAssociation.ContainsKey($parentId)) {
+                $publicIpAssociation[$parentId] = [System.Collections.Generic.List[string]]::new()
+            }
+            if ($publicIp.ipAddress) {
+                $publicIpAssociation[$parentId].Add([string]$publicIp.ipAddress)
+            }
+        }
+    }
+
+    foreach ($vnet in @($TopologyResources | Where-Object { $_.type -ieq 'microsoft.network/virtualnetworks' })) {
+        $properties = Get-DocPropertyValue $vnet 'properties'
+        $addressSpace = Get-DocPropertyValue $properties 'addressSpace'
+        $prefixes = @(Get-DocPropertyValue $addressSpace 'addressPrefixes' @())
+        $nodes[[string]$vnet.id] = [pscustomobject]@{
+            Id          = [string]$vnet.id
+            Name        = [string]$vnet.name
+            Type        = 'Virtual network'
+            Region      = [string]$vnet.location
+            VnetId      = [string]$vnet.id
+            Subnet      = ''
+            PrivateIps  = $prefixes -join '; '
+            PublicIps   = ''
+            Remote      = $false
+            Connected   = $true
+        }
+    }
+
+    $privateEndpointIps = @{}
+    foreach ($nic in @($AllNetworkResources | Where-Object { $_.type -ieq 'microsoft.network/networkinterfaces' })) {
+        $properties = Get-DocPropertyValue $nic 'properties'
+        $privateEndpoint = Get-DocPropertyValue $properties 'privateEndpoint'
+        $privateEndpointId = [string](Get-DocPropertyValue $privateEndpoint 'id' '')
+        if ($privateEndpointId) {
+            $privateEndpointIps[$privateEndpointId] = @(
+                Get-DocPropertyValue $properties 'ipConfigurations' @() |
+                    ForEach-Object { Get-DocPropertyValue (Get-DocPropertyValue $_ 'properties') 'privateIPAddress' '' } |
+                    Where-Object { $_ }
+            )
+        }
+    }
+
+    $deviceTypes = [ordered]@{
+        'microsoft.network/azurefirewalls'         = 'Azure Firewall'
+        'microsoft.network/virtualnetworkgateways' = 'VPN/ER gateway'
+        'microsoft.network/applicationgateways'    = 'Application Gateway'
+        'microsoft.network/bastionhosts'           = 'Azure Bastion'
+        'microsoft.network/natgateways'             = 'NAT Gateway'
+        'microsoft.network/loadbalancers'           = 'Load Balancer'
+        'microsoft.network/privateendpoints'        = 'Private Endpoint'
+    }
+
+    foreach ($resource in @($AllNetworkResources | Where-Object { $deviceTypes.Contains([string]$_.type) })) {
+        $properties = Get-DocPropertyValue $resource 'properties'
+        $ipConfigurations = @(
+            @(Get-DocPropertyValue $properties 'ipConfigurations' @())) +
+            @(Get-DocPropertyValue $properties 'frontendIPConfigurations' @()) +
+            @(Get-DocPropertyValue $properties 'gatewayIPConfigurations' @())
+        $subnetIds = @(
+            $ipConfigurations |
+                ForEach-Object { Get-DocPropertyValue (Get-DocPropertyValue $_ 'properties') 'subnet' } |
+                ForEach-Object { Get-DocPropertyValue $_ 'id' '' } |
+                Where-Object { $_ }
+        )
+        if ($subnetIds.Count -eq 0) {
+            $subnetIds = @(
+                Get-DocPropertyValue $properties 'subnets' @() |
+                    ForEach-Object { Get-DocPropertyValue $_ 'id' '' } |
+                    Where-Object { $_ }
+            )
+        }
+        if ($resource.type -ieq 'microsoft.network/privateendpoints') {
+            $subnet = Get-DocPropertyValue $properties 'subnet'
+            $subnetIds = @([string](Get-DocPropertyValue $subnet 'id' ''))
+        }
+
+        $privateIps = @(
+            $ipConfigurations |
+                ForEach-Object { Get-DocPropertyValue (Get-DocPropertyValue $_ 'properties') 'privateIPAddress' '' } |
+                Where-Object { $_ }
+        )
+        if ($resource.type -ieq 'microsoft.network/privateendpoints' -and $privateEndpointIps.ContainsKey([string]$resource.id)) {
+            $privateIps = @($privateEndpointIps[[string]$resource.id])
+        }
+
+        $publicIpIds = @(
+            $ipConfigurations |
+                ForEach-Object { Get-DocPropertyValue (Get-DocPropertyValue $_ 'properties') 'publicIPAddress' } |
+                ForEach-Object { Get-DocPropertyValue $_ 'id' '' } |
+                Where-Object { $_ }
+        )
+        $publicIpIds += @(
+            Get-DocPropertyValue $properties 'publicIpAddresses' @() |
+                ForEach-Object { Get-DocPropertyValue $_ 'id' '' } |
+                Where-Object { $_ }
+        )
+        $publicIps = @(
+            foreach ($publicIpId in $publicIpIds) {
+                if ($publicIpById.ContainsKey([string]$publicIpId)) {
+                    $publicIpById[[string]$publicIpId].ipAddress
+                }
+            }
+            if ($publicIpAssociation.ContainsKey([string]$resource.id)) {
+                $publicIpAssociation[[string]$resource.id]
+            }
+        ) | Where-Object { $_ } | Sort-Object -Unique
+
+        $subnetId = [string]($subnetIds | Select-Object -First 1)
+        $vnetId = Get-VnetIdFromSubnetId $subnetId
+        $node = [pscustomobject]@{
+            Id          = [string]$resource.id
+            Name        = [string]$resource.name
+            Type        = [string]$deviceTypes[[string]$resource.type]
+            Region      = [string]$resource.location
+            VnetId      = $vnetId
+            Subnet      = Get-ResourceNameFromId $subnetId
+            PrivateIps  = $privateIps -join '; '
+            PublicIps   = $publicIps -join '; '
+            Remote      = $false
+            Connected   = [bool]($vnetId -and $nodes.ContainsKey($vnetId))
+        }
+        $nodes[$node.Id] = $node
+
+        if ($node.Connected) {
+            $edges.Add([pscustomobject]@{
+                From   = $vnetId
+                To     = $node.Id
+                Type   = 'Subnet attachment'
+                Status = 'Connected'
+            })
+        }
+        else {
+            $disconnected.Add([pscustomobject]@{
+                Name       = $node.Name
+                Type       = $node.Type
+                IpAddresses = (@($node.PrivateIps, $node.PublicIps) | Where-Object { $_ }) -join '; '
+                RelatedTo  = if ($subnetId) { $subnetId } else { 'No subnet association collected' }
+                State      = 'Unresolved'
+                Reason     = if ($subnetId) { 'Referenced VNet is not present in the collected topology.' } else { 'No VNet/subnet attachment was collected.' }
+                ResourceId = $node.Id
+            })
+        }
+    }
+
+    foreach ($nic in @($AllNetworkResources | Where-Object { $_.type -ieq 'microsoft.network/networkinterfaces' })) {
+        $properties = Get-DocPropertyValue $nic 'properties'
+        $privateEndpoint = Get-DocPropertyValue $properties 'privateEndpoint'
+        if (Get-DocPropertyValue $privateEndpoint 'id' '') {
+            continue
+        }
+        $virtualMachine = Get-DocPropertyValue $properties 'virtualMachine'
+        $virtualMachineId = [string](Get-DocPropertyValue $virtualMachine 'id' '')
+        if (-not $virtualMachineId) {
+            continue
+        }
+        $ipConfigurations = @(Get-DocPropertyValue $properties 'ipConfigurations' @())
+        $subnetId = [string](
+            $ipConfigurations |
+                ForEach-Object { Get-DocPropertyValue (Get-DocPropertyValue $_ 'properties') 'subnet' } |
+                ForEach-Object { Get-DocPropertyValue $_ 'id' '' } |
+                Where-Object { $_ } |
+                Select-Object -First 1
+        )
+        $vnetId = Get-VnetIdFromSubnetId $subnetId
+        $privateIps = @(
+            $ipConfigurations |
+                ForEach-Object { Get-DocPropertyValue (Get-DocPropertyValue $_ 'properties') 'privateIPAddress' '' } |
+                Where-Object { $_ }
+        )
+        $node = [pscustomobject]@{
+            Id          = $virtualMachineId
+            Name        = Get-ResourceNameFromId $virtualMachineId
+            Type        = 'Virtual machine'
+            Region      = [string]$nic.location
+            VnetId      = $vnetId
+            Subnet      = Get-ResourceNameFromId $subnetId
+            PrivateIps  = $privateIps -join '; '
+            PublicIps   = ''
+            Remote      = $false
+            Connected   = [bool]($vnetId -and $nodes.ContainsKey($vnetId))
+        }
+        $nodes[$node.Id] = $node
+        if ($node.Connected) {
+            $edges.Add([pscustomobject]@{ From = $vnetId; To = $node.Id; Type = 'NIC attachment'; Status = 'Connected' })
+        }
+        else {
+            $disconnected.Add([pscustomobject]@{
+                Name = $node.Name; Type = $node.Type; IpAddresses = $node.PrivateIps
+                RelatedTo = $subnetId; State = 'Unresolved'
+                Reason = 'The VM NIC references a VNet that is not present in the collected topology.'
+                ResourceId = $node.Id
+            })
+        }
+    }
+
+    $seenPeerings = @{}
+    foreach ($vnet in @($TopologyResources | Where-Object { $_.type -ieq 'microsoft.network/virtualnetworks' })) {
+        foreach ($peering in @(Get-DocPropertyValue (Get-DocPropertyValue $vnet 'properties') 'virtualNetworkPeerings' @())) {
+            $properties = Get-DocPropertyValue $peering 'properties'
+            $remote = Get-DocPropertyValue $properties 'remoteVirtualNetwork'
+            $remoteId = [string](Get-DocPropertyValue $remote 'id' '')
+            $state = [string](Get-DocPropertyValue $properties 'peeringState' 'Unknown')
+            $pairKey = @([string]$vnet.id, $remoteId | Sort-Object) -join '|'
+            if ($state -ieq 'Connected' -and $remoteId) {
+                if (-not $nodes.ContainsKey($remoteId)) {
+                    $nodes[$remoteId] = [pscustomobject]@{
+                        Id = $remoteId; Name = Get-ResourceNameFromId $remoteId; Type = 'Remote virtual network'
+                        Region = 'Outside collected topology'; VnetId = $remoteId; Subnet = ''
+                        PrivateIps = ''; PublicIps = ''; Remote = $true; Connected = $true
+                    }
+                }
+                if (-not $seenPeerings.ContainsKey($pairKey)) {
+                    $edges.Add([pscustomobject]@{ From = [string]$vnet.id; To = $remoteId; Type = 'VNet peering'; Status = $state })
+                    $seenPeerings[$pairKey] = $true
+                }
+            }
+            else {
+                $disconnected.Add([pscustomobject]@{
+                    Name = [string](Get-DocPropertyValue $peering 'name' '')
+                    Type = 'VNet peering'
+                    IpAddresses = ''
+                    RelatedTo = "$(Get-ResourceNameFromId ([string]$vnet.id)) -> $(Get-ResourceNameFromId $remoteId)"
+                    State = $state
+                    Reason = 'The peering is not in Connected state.'
+                    ResourceId = [string](Get-DocPropertyValue $peering 'id' '')
+                })
+            }
+        }
+    }
+
+    foreach ($publicIp in $PublicIpResources) {
+        if (-not $publicIp.ipConfigurationId) {
+            $referencedByDevice = @(
+                $nodes.Values | Where-Object {
+                    $_.PublicIps -and (@($_.PublicIps -split '; ') -contains [string]$publicIp.ipAddress)
+                }
+            ).Count -gt 0
+            if (-not $referencedByDevice) {
+                $disconnected.Add([pscustomobject]@{
+                    Name = [string]$publicIp.name; Type = 'Public IP address'; IpAddresses = [string]$publicIp.ipAddress
+                    RelatedTo = 'No associated IP configuration'; State = 'Unassociated'
+                    Reason = 'The Public IP has no collected device or IP-configuration association.'
+                    ResourceId = [string]$publicIp.id
+                })
+            }
+        }
+    }
+
+    $connectedDeviceIds = @($edges | Where-Object Type -ne 'VNet peering' | ForEach-Object To | Sort-Object -Unique)
+    $connectedDevices = @(
+        foreach ($nodeId in $connectedDeviceIds) {
+            if ($nodes.ContainsKey([string]$nodeId)) {
+                $node = $nodes[[string]$nodeId]
+                [pscustomobject]@{
+                    Name        = $node.Name
+                    Type        = $node.Type
+                    VNet        = if ($nodes.ContainsKey([string]$node.VnetId)) { $nodes[[string]$node.VnetId].Name } else { Get-ResourceNameFromId $node.VnetId }
+                    Subnet      = $node.Subnet
+                    PrivateIps  = $node.PrivateIps
+                    PublicIps   = $node.PublicIps
+                    Region      = $node.Region
+                    ResourceId  = $node.Id
+                }
+            }
+        }
+    )
+
+    return [pscustomobject]@{
+        Nodes               = @($nodes.Values)
+        Edges               = @($edges)
+        ConnectedDevices    = $connectedDevices
+        DisconnectedDevices = @($disconnected)
+    }
+}
+
+function New-NetworkTopologySvg {
+    param([Parameter(Mandatory)]$Model)
+
+    $vnetNodes = @($Model.Nodes | Where-Object { $_.Type -in @('Virtual network', 'Remote virtual network') } | Sort-Object Remote, Name)
+    if ($vnetNodes.Count -eq 0) {
+        return '<p><em>No virtual-network topology records were collected.</em></p>'
+    }
+
+    $positions = @{}
+    $rows = [System.Collections.Generic.List[object]]::new()
+    $currentY = 55
+    foreach ($vnet in $vnetNodes) {
+        $devices = @(
+            $Model.Edges |
+                Where-Object { $_.From -eq $vnet.Id -and $_.Type -ne 'VNet peering' } |
+                ForEach-Object {
+                    $edge = $_
+                    $Model.Nodes | Where-Object Id -eq $edge.To | Select-Object -First 1
+                } |
+                Where-Object { $_ } |
+                Sort-Object Type, Name
+        )
+        $rowHeight = [Math]::Max(125, 30 + (80 * $devices.Count))
+        $rows.Add([pscustomobject]@{ Vnet = $vnet; Devices = $devices; Y = $currentY; Height = $rowHeight })
+        $positions[$vnet.Id] = [pscustomobject]@{ X = 80; Y = $currentY; CenterY = $currentY + ($rowHeight / 2) }
+        $currentY += $rowHeight + 35
+    }
+
+    $height = $currentY + 30
+    $svg = [System.Collections.Generic.List[string]]::new()
+    $svg.Add("<div class=`"topology-wrap`"><svg class=`"topology-svg`" viewBox=`"0 0 1500 $height`" role=`"img`" aria-label=`"Connected Azure network topology`">")
+    $svg.Add('<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#667085"/></marker></defs>')
+    $svg.Add('<rect x="0" y="0" width="1500" height="100%" fill="#f8fbfd"/>')
+    $svg.Add('<text x="80" y="30" font-size="17" font-weight="700" fill="#0f2942">Virtual networks</text>')
+    $svg.Add('<text x="790" y="30" font-size="17" font-weight="700" fill="#0f2942">Connected devices and collected IP addresses</text>')
+
+    foreach ($edge in @($Model.Edges | Where-Object Type -eq 'VNet peering')) {
+        if (-not $positions.ContainsKey([string]$edge.From) -or -not $positions.ContainsKey([string]$edge.To)) {
+            continue
+        }
+        $from = $positions[[string]$edge.From]
+        $to = $positions[[string]$edge.To]
+        $bendX = 35
+        $svg.Add("<path d=`"M $($from.X) $($from.CenterY) C $bendX $($from.CenterY), $bendX $($to.CenterY), $($to.X) $($to.CenterY)`" fill=`"none`" stroke=`"#0078d4`" stroke-width=`"3`" marker-end=`"url(#arrow)`"/>")
+    }
+
+    foreach ($row in $rows) {
+        $vnet = $row.Vnet
+        $vnetFill = if ($vnet.Remote) { '#f2f4f7' } else { '#e8f2fb' }
+        $vnetStroke = if ($vnet.Remote) { '#98a2b3' } else { '#0078d4' }
+        $name = [System.Net.WebUtility]::HtmlEncode([string]$vnet.Name)
+        $region = [System.Net.WebUtility]::HtmlEncode([string]$vnet.Region)
+        $prefixes = [System.Net.WebUtility]::HtmlEncode([string]$vnet.PrivateIps)
+        $svg.Add("<rect x=`"80`" y=`"$($row.Y)`" width=`"610`" height=`"$($row.Height)`" rx=`"12`" fill=`"$vnetFill`" stroke=`"$vnetStroke`" stroke-width=`"2`"/>")
+        $svg.Add("<text x=`"105`" y=`"$($row.Y + 32)`" font-size=`"18`" font-weight=`"700`" fill=`"#0f2942`">$name</text>")
+        $svg.Add("<text x=`"105`" y=`"$($row.Y + 57)`" font-size=`"13`" fill=`"#475467`">Region: $region</text>")
+        $svg.Add("<text x=`"105`" y=`"$($row.Y + 79)`" font-size=`"13`" fill=`"#475467`">Address space: $prefixes</text>")
+
+        $deviceIndex = 0
+        foreach ($device in $row.Devices) {
+            $deviceY = $row.Y + 10 + (80 * $deviceIndex)
+            $deviceCenterY = $deviceY + 32
+            $deviceName = [System.Net.WebUtility]::HtmlEncode([string]$device.Name)
+            $deviceType = [System.Net.WebUtility]::HtmlEncode([string]$device.Type)
+            $subnet = [System.Net.WebUtility]::HtmlEncode([string]$device.Subnet)
+            $privateIps = [System.Net.WebUtility]::HtmlEncode([string]$device.PrivateIps)
+            $publicIps = [System.Net.WebUtility]::HtmlEncode([string]$device.PublicIps)
+            $ipText = @(
+                if ($privateIps) { "Private: $privateIps" }
+                if ($publicIps) { "Public: $publicIps" }
+            ) -join ' | '
+            if (-not $ipText) {
+                $ipText = 'IP address not present in collected configuration'
+            }
+            $svg.Add("<line x1=`"690`" y1=`"$deviceCenterY`" x2=`"790`" y2=`"$deviceCenterY`" stroke=`"#667085`" stroke-width=`"2`" marker-end=`"url(#arrow)`"/>")
+            $svg.Add("<rect x=`"790`" y=`"$deviceY`" width=`"650`" height=`"64`" rx=`"9`" fill=`"#ffffff`" stroke=`"#12b76a`" stroke-width=`"2`"/>")
+            $svg.Add("<text x=`"810`" y=`"$($deviceY + 23)`" font-size=`"15`" font-weight=`"700`" fill=`"#0f2942`">$deviceName</text>")
+            $svg.Add("<text x=`"810`" y=`"$($deviceY + 43)`" font-size=`"12`" fill=`"#475467`">$deviceType | Subnet: $subnet</text>")
+            $svg.Add("<text x=`"810`" y=`"$($deviceY + 59)`" font-size=`"11`" fill=`"#175cd3`">$ipText</text>")
+            $deviceIndex++
+        }
+    }
+    $svg.Add('</svg></div>')
+    return $svg -join [Environment]::NewLine
+}
+
 $pages = @(
     [pscustomobject]@{ Slug = 'index'; Title = 'Documentation Home' }
     [pscustomobject]@{ Slug = '01-executive-summary'; Title = 'Executive Summary' }
@@ -154,6 +580,8 @@ th,td { border:1px solid var(--line); padding:7px 9px; text-align:left; vertical
 th { background:#edf4fa; }
 code { background:#eef2f6; padding:2px 5px; border-radius:3px; }
 blockquote { border-left:5px solid #ffb900; background:#fff7d6; margin:18px 0; padding:10px 16px; }
+.topology-wrap { width:100%; overflow:auto; border:1px solid var(--line); border-radius:8px; background:#f8fbfd; margin:16px 0 24px; }
+.topology-svg { display:block; min-width:1100px; width:100%; height:auto; }
 footer { color:#667085; text-align:center; padding:16px; }
 @media (max-width:900px) { .layout { grid-template-columns:1fr; } nav { border-right:0; border-bottom:1px solid var(--line); } }
 '@
@@ -219,6 +647,7 @@ $managedIdentities = @(Get-JsonItems '03-identity\managed-identities.json' -Opti
 $directoryRoles = @(Get-JsonItems '03-identity\directory-roles.json' -Optional)
 $conditionalAccess = @(Get-JsonItems '03-identity\conditional-access-policies.json' -Optional)
 $networkResources = @(Get-JsonItems '04-network\network-resources.json' -Optional)
+$networkTopologyResources = @(Get-JsonItems '04-network\network-topology.json' -Optional)
 $vnets = @(Get-JsonItems '04-network\vnets-subnets.json' -Optional)
 $publicIps = @(Get-JsonItems '04-network\public-ip-addresses.json' -Optional)
 $privateEndpoints = @(Get-JsonItems '04-network\private-endpoints.json' -Optional)
@@ -292,6 +721,19 @@ $unsupportedTypeSummary = @(
     $unsupportedDiagnostics | Group-Object type | Sort-Object Count -Descending |
         ForEach-Object { [pscustomobject]@{ ResourceType = $_.Name; Resources = $_.Count } }
 )
+$networkTopologyModel = New-NetworkTopologyModel `
+    -TopologyResources $networkTopologyResources `
+    -AllNetworkResources $networkResources `
+    -PublicIpResources $publicIps
+$networkTopologySvg = New-NetworkTopologySvg -Model $networkTopologyModel
+
+[System.IO.File]::WriteAllText(
+    (Join-Path $documentationRoot 'network-topology.json'),
+    (ConvertTo-Json -InputObject $networkTopologyModel -Depth 15),
+    [System.Text.UTF8Encoding]::new($false)
+)
+$networkTopologyModel.DisconnectedDevices |
+    Export-Csv -LiteralPath (Join-Path $documentationRoot 'network-disconnected-devices.csv') -NoTypeInformation -Encoding utf8
 
 $generatedUtc = (Get-Date).ToUniversalTime().ToString('u')
 $contents = ($pages | Where-Object Slug -ne 'index' | ForEach-Object {
@@ -487,8 +929,41 @@ $(New-MetricList ([ordered]@{
     'ExpressRoute circuits' = $expressRouteCircuits.Count
     'Public IP addresses' = $publicIps.Count
     'Private Endpoints' = $privateEndpoints.Count
+    'Connected devices shown in topology' = $networkTopologyModel.ConnectedDevices.Count
+    'Disconnected or unresolved records' = $networkTopologyModel.DisconnectedDevices.Count
     'Network best-practice review candidates' = $networkFindings.Count
 }))
+
+## Connected network topology
+
+> The diagram shows configuration-based connectivity. Blue lines represent VNet peerings in `Connected` state. Green device boxes are attached through a collected subnet reference. IP labels are taken from NIC, frontend IP, gateway, firewall, Private Endpoint, and Public IP configuration evidence.
+
+$networkTopologySvg
+
+## Connected devices and IP addresses
+
+$(New-MarkdownTable $networkTopologyModel.ConnectedDevices ([ordered]@{
+    'Device' = { param($r) $r.Name }
+    'Type' = { param($r) $r.Type }
+    'VNet' = { param($r) $r.VNet }
+    'Subnet' = { param($r) $r.Subnet }
+    'Private IPs' = { param($r) $r.PrivateIps }
+    'Public IPs' = { param($r) $r.PublicIps }
+    'Region' = { param($r) $r.Region }
+}) -EmptyMessage 'No connected network devices could be derived from the collected relationships.')
+
+## Disconnected, unassociated, or unresolved devices
+
+> These records are intentionally excluded from the connected topology. A disconnected peering can indicate a deleted or unavailable remote VNet, incomplete bidirectional configuration, permissions/scope gaps, or an in-progress deployment. Validate before treating it as a confirmed outage.
+
+$(New-MarkdownTable $networkTopologyModel.DisconnectedDevices ([ordered]@{
+    'Device or link' = { param($r) $r.Name }
+    'Type' = { param($r) $r.Type }
+    'IP addresses' = { param($r) $r.IpAddresses }
+    'Related to' = { param($r) $r.RelatedTo }
+    'State' = { param($r) $r.State }
+    'Reason' = { param($r) $r.Reason }
+}) -EmptyMessage 'No disconnected or unresolved network records were identified.')
 
 ## Best-practice review candidates
 
@@ -833,6 +1308,10 @@ $metadata = [ordered]@{
     Resources = $resources.Count
     ReviewCandidates = $observations.Count
     NetworkReviewCandidates = $networkFindings.Count
+    ConnectedNetworkDevices = $networkTopologyModel.ConnectedDevices.Count
+    DisconnectedNetworkRecords = $networkTopologyModel.DisconnectedDevices.Count
+    NetworkTopologyData = Join-Path $documentationRoot 'network-topology.json'
+    DisconnectedNetworkCsv = Join-Path $documentationRoot 'network-disconnected-devices.csv'
     EntryPoint = Join-Path $htmlRoot 'index.html'
 }
 ConvertTo-Json -InputObject $metadata -Depth 10 |

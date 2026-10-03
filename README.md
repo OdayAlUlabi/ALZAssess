@@ -384,6 +384,8 @@ Start-Process '.\output\full-platform-assessment\documentation\html\index.html'
 
 The generated documentation includes executive, scope, platform, governance, identity, network, security, operations, resilience, cost, workload-status, and next-step chapters. Detailed appendices contain subscription, resource, Defender, RBAC, collection-error, and evidence-index records.
 
+The Network Architecture chapter includes an offline SVG topology diagram with connected VNets and devices, collected private/public IP addresses, and a separate disconnected or unresolved device/link register. The generated `network-topology.json` and `network-disconnected-devices.csv` files preserve the model behind the visualization.
+
 ## Sequence
 
 1. `00-Prerequisites.ps1`: validates Azure CLI, login, and scope.

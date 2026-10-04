@@ -107,8 +107,9 @@ Select approximately three to five workloads covering different architectures an
 | Standard | Yes | Yes | No | Recommended assessment baseline |
 | Full | Yes | Yes | Yes | Deep monitoring and diagnostic-settings review |
 
-Explicit switches override profile behavior only in the direction of skipping data:
+Optional switches can skip data that is not part of the approved assessment scope:
 
+- `-SkipWorkloads`
 - `-SkipDirectoryData`
 - `-SkipPerResourceDiagnostics`
 

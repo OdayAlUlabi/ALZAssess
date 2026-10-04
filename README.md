@@ -12,44 +12,43 @@ This PowerShell suite collects read-only Azure Landing Zone, WAF, WARA, security
 
 Run these commands from the repository root in **PowerShell 7.3 or later**.
 
-### 1. Sign in and select subscriptions
+### 1. Sign in and load tenant subscriptions
 
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 az login
 
-$subscriptionIds = @(
-  '11111111-1111-1111-1111-111111111111'
-  '22222222-2222-2222-2222-222222222222'
+$tenantId = az account show --query tenantId --output tsv
+$subscriptions = @(
+  az account list --all --output json |
+    ConvertFrom-Json |
+    Where-Object { $_.tenantId -eq $tenantId -and $_.state -eq 'Enabled' }
 )
+$subscriptionIds = @($subscriptions.id)
 
-$outputPath = '.\output\assessment-2026-10-04'
-```
-
-Verify the selected subscriptions:
-
-```powershell
-$visibleSubscriptions = @(az account list --all --output json | ConvertFrom-Json)
-$visibleSubscriptions |
-  Where-Object id -in $subscriptionIds |
-  Format-Table name, id, state, tenantId -AutoSize
-
-$missingIds = @($subscriptionIds | Where-Object { $_ -notin $visibleSubscriptions.id })
-if ($missingIds.Count) {
-  throw "Subscriptions are not visible: $($missingIds -join ', ')"
+if ($subscriptionIds.Count -eq 0) {
+  throw "No enabled subscriptions are visible in tenant $tenantId."
 }
+
+$subscriptions | Sort-Object name | Format-Table name, id, state -AutoSize
+Write-Host "Subscriptions loaded: $($subscriptionIds.Count)" -ForegroundColor Green
+
+$outputPath = ".\output\assessment-$(Get-Date -Format 'yyyy-MM-dd')"
 ```
 
-Omit `-SubscriptionId $subscriptionIds` from the next command only when all enabled subscriptions visible to the signed-in identity are intentionally in scope.
+Review the displayed list before continuing. Remove IDs from `$subscriptionIds` if the assessment should cover only part of the tenant.
 
-### 2. Collect the evidence
+### 2. Run the Full platform assessment without workloads
 
 ```powershell
 & '.\Invoke-AlzAssessmentCollection.ps1' `
   -SubscriptionId $subscriptionIds `
-  -Profile Standard `
+  -Profile Full `
+  -SkipWorkloads `
   -OutputPath $outputPath
 ```
+
+This runs platform stages 0-8, skips workload stage 9, and runs stage 10 to build the evidence index.
 
 Use the call operator `&`. Without it, PowerShell treats the quoted script path as text and reports `Unexpected token '-SubscriptionId'`.
 
@@ -97,6 +96,7 @@ Each workload must specify a subscription ID and at least one resource group.
 | Fast inventory without Entra or per-resource diagnostics | `-Profile Fast` |
 | Recommended platform assessment | `-Profile Standard` |
 | Include diagnostic settings for every resource | `-Profile Full` |
+| Skip workload collection but still build the index | `-SkipWorkloads` |
 | Continue an interrupted run | `-Resume` with the same output path |
 | Run only selected stages | `-StartAtStage <n> -EndAtStage <n>` |
 | Stop automation when collection errors occur | `-FailOnCollectionError` |

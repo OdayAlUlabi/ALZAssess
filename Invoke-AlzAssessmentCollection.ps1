@@ -9,6 +9,7 @@ param(
     [ValidateRange(0, 10)][int]$StartAtStage = 0,
     [ValidateRange(0, 10)][int]$EndAtStage = 10,
     [switch]$Resume,
+    [switch]$SkipWorkloads,
     [switch]$SkipDirectoryData,
     [switch]$SkipPerResourceDiagnostics,
     [switch]$FailOnCollectionError
@@ -31,6 +32,7 @@ $runMetadata = [ordered]@{
     StartAtStage               = $StartAtStage
     EndAtStage                 = $EndAtStage
     Resume                     = [bool]$Resume
+    SkipWorkloads              = [bool]$SkipWorkloads
     SkipDirectoryData          = [bool]$effectiveSkipDirectoryData
     SkipPerResourceDiagnostics = [bool]$effectiveSkipPerResourceDiagnostics
     Host                       = $env:COMPUTERNAME
@@ -60,6 +62,15 @@ $selectedStages = for ($stageIndex = $StartAtStage; $stageIndex -le $EndAtStage;
 foreach ($stage in $selectedStages) {
     $stageNumber = '{0:D2}' -f $stage.Index
     $markerPath = Join-Path $resolvedOutput "_stage-$stageNumber.complete.json"
+    if ($SkipWorkloads -and $stage.Index -eq 9) {
+        Write-Host "`n=== Skipping workload collection by request ===" -ForegroundColor DarkGray
+        $runMetadata.Stages += [ordered]@{
+            Stage  = $stage.Index
+            File   = $stage.File
+            Status = 'SkippedByRequest'
+        }
+        continue
+    }
     if ($Resume -and (Test-Path -LiteralPath $markerPath)) {
         Write-Host "`n=== Skipping completed stage $($stage.File) ===" -ForegroundColor DarkGray
         $runMetadata.Stages += [ordered]@{

@@ -54,6 +54,7 @@ The implementation sends explicit subscription IDs, requests object-array output
 | `StartAtStage` | `int` | `0` | First stage, inclusive |
 | `EndAtStage` | `int` | `10` | Last stage, inclusive |
 | `Resume` | switch | Off | Skip stages with completion markers |
+| `SkipWorkloads` | switch | Off | Skip stage 9 while allowing stage 10 to build the evidence index |
 | `SkipDirectoryData` | switch | Off | Disable Microsoft Graph collection |
 | `SkipPerResourceDiagnostics` | switch | Off | Disable resource-by-resource diagnostics |
 | `FailOnCollectionError` | switch | Off | Exit with code 2 when optional errors exist |

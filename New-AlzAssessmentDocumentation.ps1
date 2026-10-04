@@ -126,6 +126,184 @@ function Get-DocPropertyValue {
     return $property.Value
 }
 
+function Get-ServiceCategory {
+    param([Parameter(Mandatory)][string]$ResourceType)
+
+    switch -Regex ($ResourceType.ToLowerInvariant()) {
+        '^microsoft\.compute/' { return 'Compute' }
+        '^microsoft\.containerservice/|^microsoft\.containerinstance/|^microsoft\.app/containerapps|^microsoft\.app/managedenvironments|^microsoft\.redhatopenshift/' { return 'Containers' }
+        '^microsoft\.web/' { return 'App Service and Functions' }
+        '^microsoft\.apimanagement/|^microsoft\.logic/|^microsoft\.datafactory/' { return 'Application Integration' }
+        '^microsoft\.sql/|^microsoft\.dbforpostgresql/|^microsoft\.dbformysql/|^microsoft\.documentdb/|^microsoft\.cache/|^microsoft\.synapse/|^microsoft\.databricks/' { return 'Databases and Data' }
+        '^microsoft\.cognitiveservices/|^microsoft\.machinelearningservices/|^microsoft\.search/|^microsoft\.botservice/' { return 'AI and Machine Learning' }
+        '^microsoft\.storage/' { return 'Storage' }
+        '^microsoft\.servicebus/|^microsoft\.eventhub/|^microsoft\.eventgrid/|^microsoft\.relay/|^microsoft\.notificationhubs/' { return 'Messaging and Events' }
+        '^microsoft\.network/|^microsoft\.cdn/' { return 'Network' }
+        '^microsoft\.keyvault/|^microsoft\.security/' { return 'Security' }
+        '^microsoft\.insights/|^microsoft\.operationalinsights/|^microsoft\.monitor/|^microsoft\.automation/|^microsoft\.maintenance/' { return 'Operations' }
+        '^microsoft\.recoveryservices/|^microsoft\.dataprotection/' { return 'Resilience' }
+        default { return 'Other Azure Services' }
+    }
+}
+
+function Get-ServiceConfigurationSummary {
+    param([AllowNull()]$Properties)
+
+    if ($null -eq $Properties) {
+        return ''
+    }
+
+    $indicators = [System.Collections.Generic.List[string]]::new()
+    $propertyMap = [ordered]@{
+        'State' = @('provisioningState', 'state', 'status')
+        'Public access' = @('publicNetworkAccess')
+        'HTTPS only' = @('httpsOnly')
+        'Minimum TLS' = @('minimumTlsVersion', 'minTlsVersion')
+        'Zone redundant' = @('zoneRedundant')
+        'Version' = @('version', 'currentSku')
+        'Kind' = @('kind')
+    }
+    foreach ($entry in $propertyMap.GetEnumerator()) {
+        foreach ($propertyName in $entry.Value) {
+            $value = Get-DocPropertyValue $Properties $propertyName
+            if ($null -ne $value -and [string]$value) {
+                $indicators.Add("$($entry.Key): $value")
+                break
+            }
+        }
+    }
+
+    $highAvailability = Get-DocPropertyValue $Properties 'highAvailability'
+    if ($highAvailability) {
+        $mode = Get-DocPropertyValue $highAvailability 'mode'
+        $state = Get-DocPropertyValue $highAvailability 'state'
+        $haText = @($mode, $state | Where-Object { $_ }) -join '/'
+        if ($haText) {
+            $indicators.Add("High availability: $haText")
+        }
+    }
+
+    $networkAcls = Get-DocPropertyValue $Properties 'networkAcls'
+    if ($networkAcls) {
+        $defaultAction = Get-DocPropertyValue $networkAcls 'defaultAction'
+        if ($defaultAction) {
+            $indicators.Add("Network default: $defaultAction")
+        }
+    }
+
+    return @($indicators | Select-Object -Unique) -join '; '
+}
+
+function New-ServiceRows {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$ConfigurationResources,
+        [Parameter(Mandatory)][hashtable]$SubscriptionNames
+    )
+
+    return @(
+        foreach ($resource in $ConfigurationResources) {
+            $properties = Get-DocPropertyValue $resource 'properties'
+            $identity = Get-DocPropertyValue $resource 'identity'
+            $sku = Get-DocPropertyValue $resource 'sku'
+            $privateEndpointConnections = @(Get-DocPropertyValue $properties 'privateEndpointConnections' @())
+            [pscustomobject]@{
+                Category             = Get-ServiceCategory ([string]$resource.type)
+                Name                 = [string]$resource.name
+                Type                 = [string]$resource.type
+                Subscription         = if ($SubscriptionNames.ContainsKey([string]$resource.subscriptionId)) { $SubscriptionNames[[string]$resource.subscriptionId] } else { [string]$resource.subscriptionId }
+                SubscriptionId       = [string]$resource.subscriptionId
+                ResourceGroup        = [string]$resource.resourceGroup
+                Region               = [string]$resource.location
+                Kind                 = [string](Get-DocPropertyValue $resource 'kind' '')
+                Sku                  = [string](Get-DocPropertyValue $sku 'name' '')
+                Zones                = @(Get-DocPropertyValue $resource 'zones' @()) -join '; '
+                Identity             = [string](Get-DocPropertyValue $identity 'type' '')
+                PublicNetworkAccess  = [string](Get-DocPropertyValue $properties 'publicNetworkAccess' '')
+                PrivateEndpoints     = $privateEndpointConnections.Count
+                Configuration        = Get-ServiceConfigurationSummary $properties
+                ResourceId           = [string]$resource.id
+            }
+        }
+    )
+}
+
+function New-ServiceInventoryBody {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Rows,
+        [Parameter(Mandatory)][string]$ScopeDescription,
+        [Parameter(Mandatory)][string]$ValidationGuidance,
+        [int]$Limit = 20
+    )
+
+    $typeSummary = @(
+        $Rows | Group-Object Type | Sort-Object Count -Descending |
+            ForEach-Object { [pscustomobject]@{ Type = $_.Name; Resources = $_.Count } }
+    )
+    $subscriptionSummary = @(
+        $Rows | Group-Object Subscription | Sort-Object Count -Descending |
+            ForEach-Object { [pscustomobject]@{ Subscription = $_.Name; Resources = $_.Count } }
+    )
+    $publicAccess = @($Rows | Where-Object PublicNetworkAccess -eq 'Enabled').Count
+    $privateEndpointCount = 0
+    foreach ($row in $Rows) {
+        if ($row.PrivateEndpoints) {
+            $privateEndpointCount += [int]$row.PrivateEndpoints
+        }
+    }
+
+    return @"
+> $ScopeDescription
+
+## Summary
+
+$(New-MetricList ([ordered]@{
+    'Resources' = $Rows.Count
+    'Resource types' = $typeSummary.Count
+    'Subscriptions represented' = $subscriptionSummary.Count
+    'Regions represented' = @($Rows | ForEach-Object { $_.Region } | Where-Object { $_ } | Sort-Object -Unique).Count
+    'Public network access enabled' = $publicAccess
+    'Private Endpoint connections' = [int]$privateEndpointCount
+}))
+
+## Resource types
+
+$(New-MarkdownTable $typeSummary ([ordered]@{
+    'Resource type' = { param($r) $r.Type }
+    'Resources' = { param($r) $r.Resources }
+}))
+
+## Subscription distribution
+
+$(New-MarkdownTable $subscriptionSummary ([ordered]@{
+    'Subscription' = { param($r) $r.Subscription }
+    'Resources' = { param($r) $r.Resources }
+}))
+
+## Configuration overview
+
+$(New-MarkdownTable $Rows ([ordered]@{
+    'Name' = { param($r) $r.Name }
+    'Resource type' = { param($r) $r.Type }
+    'Subscription' = { param($r) $r.Subscription }
+    'Resource group' = { param($r) $r.ResourceGroup }
+    'Region' = { param($r) $r.Region }
+    'Kind' = { param($r) $r.Kind }
+    'SKU' = { param($r) $r.Sku }
+    'Zones' = { param($r) $r.Zones }
+    'Identity' = { param($r) $r.Identity }
+    'Public access' = { param($r) $r.PublicNetworkAccess }
+    'Private Endpoints' = { param($r) $r.PrivateEndpoints }
+    'Configuration indicators' = { param($r) $r.Configuration }
+}) -Limit $Limit)
+
+## Assessment interpretation
+
+$ValidationGuidance
+
+The page summarizes properties exposed through Azure Resource Graph. Empty fields mean that the property was absent from the collected representation; they do not prove that a control is disabled or compliant.
+"@
+}
+
 function Get-NetworkResourceParentId {
     param([AllowEmptyString()][string]$ChildResourceId)
 
@@ -549,6 +727,12 @@ $pages = @(
     [pscustomobject]@{ Slug = '10-cost'; Title = 'Cost Optimization' }
     [pscustomobject]@{ Slug = '11-workloads'; Title = 'Workload Assessment Status' }
     [pscustomobject]@{ Slug = '12-observations-and-next-steps'; Title = 'Observations and Next Steps' }
+    [pscustomobject]@{ Slug = '13-service-estate'; Title = 'Azure Service Estate' }
+    [pscustomobject]@{ Slug = '14-compute-and-containers'; Title = 'Compute and Containers' }
+    [pscustomobject]@{ Slug = '15-app-services-and-integration'; Title = 'App Services and Integration' }
+    [pscustomobject]@{ Slug = '16-databases-and-data'; Title = 'Databases and Data Platforms' }
+    [pscustomobject]@{ Slug = '17-ai-and-machine-learning'; Title = 'AI and Machine Learning' }
+    [pscustomobject]@{ Slug = '18-storage-and-messaging'; Title = 'Storage, Messaging, and Events' }
     [pscustomobject]@{ Slug = '90-subscription-appendix'; Title = 'Appendix: Subscription Inventory' }
     [pscustomobject]@{ Slug = '91-resource-appendix'; Title = 'Appendix: Resource Inventory' }
     [pscustomobject]@{ Slug = '92-defender-appendix'; Title = 'Appendix: Defender Assessments' }
@@ -640,6 +824,7 @@ $managementGroups = @(Get-JsonItems '01-tenant-hierarchy\management-groups.json'
 $subscriptions = @(Get-JsonItems '01-tenant-hierarchy\subscriptions.json' -Optional)
 $resourceContainers = @(Get-JsonItems '01-tenant-hierarchy\resource-containers.json' -Optional)
 $resources = @(Get-JsonItems '02-resource-governance\resources.json' -Optional)
+$resourceConfigurations = @(Get-JsonItems '02-resource-governance\resource-configurations.json' -Optional)
 $tagCoverage = @(Get-JsonItems '02-resource-governance\tag-coverage.json' -Optional)
 $policyCompliance = @(Get-JsonItems '02-resource-governance\policy-compliance-summary.json' -Optional)
 $rbacAssignments = @(Get-JsonItems '03-identity\rbac-role-assignments.json' -Optional)
@@ -658,6 +843,7 @@ $operationsResources = @(Get-JsonItems '06-operations\operations-resources.json'
 $resourceDiagnostics = @(Get-JsonItems '06-operations\resource-diagnostic-settings.json' -Optional)
 $unsupportedDiagnostics = @(Get-JsonItems '06-operations\resource-diagnostic-settings-unsupported.json' -Optional)
 $backupResources = @(Get-JsonItems '07-resilience\backup-site-recovery.json' -Optional)
+$availabilityConfigurations = @(Get-JsonItems '07-resilience\availability-configuration.json' -Optional)
 $advisorReliability = @(Get-JsonItems '07-resilience\advisor-reliability.json' -Optional)
 $resourceHealth = @(Get-JsonItems '07-resilience\resource-health.json' -Optional)
 $advisorCost = @(Get-JsonItems '08-cost-optimization\advisor-cost.json' -Optional)
@@ -673,6 +859,10 @@ $vnetPeerings = @(Get-CsvItems 'reports\csv\vnet-peerings.csv')
 $collectionErrors = @(Get-CsvItems '_collection-errors.csv')
 $evidenceIndex = @(Get-CsvItems '10-evidence-index\evidence-index.csv')
 
+if ($resourceConfigurations.Count -eq 0) {
+    $resourceConfigurations = $availabilityConfigurations
+}
+
 $effectiveSubscriptionIds = if ($scope -and $scope.PSObject.Properties['Subscriptions'] -and $scope.Subscriptions) {
     @($scope.Subscriptions)
 }
@@ -680,11 +870,52 @@ else {
     @($resources.subscriptionId | Where-Object { $_ } | Sort-Object -Unique)
 }
 $effectiveSubscriptions = @($subscriptions | Where-Object { $_.id -in $effectiveSubscriptionIds })
+$subscriptionNames = @{}
+foreach ($subscription in $effectiveSubscriptions) {
+    $subscriptionNames[[string]$subscription.id] = [string]$subscription.name
+}
+$serviceRows = @(New-ServiceRows -ConfigurationResources $resourceConfigurations -SubscriptionNames $subscriptionNames)
+$serviceSummary = @(
+    $serviceRows | Group-Object Category | Sort-Object Count -Descending |
+        ForEach-Object {
+            [pscustomobject]@{
+                Category = $_.Name
+                Resources = $_.Count
+                Subscriptions = @($_.Group.SubscriptionId | Sort-Object -Unique).Count
+                Regions = @($_.Group.Region | Where-Object { $_ } | Sort-Object -Unique).Count
+                PublicAccessEnabled = @($_.Group | Where-Object PublicNetworkAccess -eq 'Enabled').Count
+                PrivateEndpoints = ($_.Group | Measure-Object PrivateEndpoints -Sum).Sum
+            }
+        }
+)
+$computeContainerRows = @($serviceRows | Where-Object Category -in @('Compute', 'Containers'))
+$appIntegrationRows = @($serviceRows | Where-Object Category -in @('App Service and Functions', 'Application Integration'))
+$databaseDataRows = @($serviceRows | Where-Object Category -eq 'Databases and Data')
+$aiRows = @($serviceRows | Where-Object Category -eq 'AI and Machine Learning')
+$storageMessagingRows = @($serviceRows | Where-Object Category -in @('Storage', 'Messaging and Events'))
+$serviceRows |
+    Export-Csv -LiteralPath (Join-Path $documentationRoot 'azure-service-inventory.csv') -NoTypeInformation -Encoding utf8
+$workloadScopes = @()
+$workloadResourceRecords = @()
+$workloadPath = Join-Path $evidenceRoot '09-workloads'
+if (Test-Path -LiteralPath $workloadPath) {
+    $workloadScopes = @(
+        Get-ChildItem -LiteralPath $workloadPath -Filter '*-scope.json' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 30 }
+    )
+    $workloadResourceRecords = @(
+        Get-ChildItem -LiteralPath $workloadPath -Filter '*-resources.json' -File -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 100 }
+    )
+}
 $resourceGroups = @($resourceContainers | Where-Object { $_.type -eq 'microsoft.resources/subscriptions/resourcegroups' })
 $untagged = @($tagCoverage | Where-Object { [int]$_.tagCount -eq 0 })
 $unhealthyDefender = @($defenderAssessments | Where-Object { $_.status -eq 'Unhealthy' })
 $directUserRbac = @($rbacAssignments | Where-Object { $_.principalType -eq 'User' })
-$nonCompliantPolicies = ($policyCompliance | Where-Object complianceState -eq 'NonCompliant' | Measure-Object Count -Sum).Sum
+$nonCompliantPolicies = 0
+foreach ($policyState in @($policyCompliance | Where-Object complianceState -eq 'NonCompliant')) {
+    $nonCompliantPolicies += [int]$policyState.Count
+}
 
 $resourceTypes = @(
     $resources | Group-Object type | Sort-Object Count -Descending |
@@ -752,6 +983,8 @@ $(New-MetricList ([ordered]@{
     'Subscriptions in scope' = $effectiveSubscriptionIds.Count
     'Resources' = $resources.Count
     'Resource groups' = $resourceGroups.Count
+    'Azure service categories' = $serviceSummary.Count
+    'Workloads documented' = $workloadScopes.Count
     'Collection errors' = $collectionErrors.Count
     'Review candidates' = $observations.Count
 }))
@@ -774,6 +1007,12 @@ $(New-MetricList ([ordered]@{
     'Resources' = $resources.Count
     'Regions represented' = $regions.Count
     'Resource types represented' = $resourceTypes.Count
+    'Compute and container resources' = $computeContainerRows.Count
+    'App and integration resources' = $appIntegrationRows.Count
+    'Database and data resources' = $databaseDataRows.Count
+    'AI and machine learning resources' = $aiRows.Count
+    'Storage and messaging resources' = $storageMessagingRows.Count
+    'Workloads documented' = $workloadScopes.Count
     'Untagged resources' = $untagged.Count
     'Noncompliant Policy records' = [int]$nonCompliantPolicies
     'Unhealthy Defender assessments' = $unhealthyDefender.Count
@@ -1155,12 +1394,39 @@ Orphan candidates require ownership and dependency validation before deletion. R
 "@
 Write-DocumentationPage '10-cost' 'Cost Optimization' $costBody
 
-$workloadPath = Join-Path $evidenceRoot '09-workloads'
-$workloadBody = if (Test-Path -LiteralPath $workloadPath) {
+$workloadBody = if ($workloadScopes.Count -gt 0) {
 @"
-## Workload evidence
+## Workload overview
 
-Workload evidence exists under `09-workloads`. Validate each workload's business purpose, owner, criticality, dependencies, RTO/RPO, data classification, and external services before completing WAF and WARA conclusions.
+$(New-MetricList ([ordered]@{
+    'Workloads documented' = $workloadScopes.Count
+    'Workload resource records' = $workloadResourceRecords.Count
+    'Critical workloads' = @($workloadScopes | Where-Object { $_.criticality -match 'critical' }).Count
+}))
+
+$(New-MarkdownTable $workloadScopes ([ordered]@{
+    'Workload' = { param($r) $r.name }
+    'Business purpose' = { param($r) $r.businessPurpose }
+    'Owner' = { param($r) $r.owner }
+    'Criticality' = { param($r) $r.criticality }
+    'RTO' = { param($r) $r.rto }
+    'RPO' = { param($r) $r.rpo }
+    'Subscription ID' = { param($r) $r.subscriptionId }
+    'Resource groups' = { param($r) @($r.resourceGroups) -join '; ' }
+    'Regions' = { param($r) @($r.regions) -join '; ' }
+}))
+
+## Workload resource types
+
+$(New-MarkdownTable @(
+    $workloadResourceRecords | Group-Object type | Sort-Object Count -Descending |
+        ForEach-Object { [pscustomobject]@{ Type = $_.Name; Resources = $_.Count } }
+) ([ordered]@{
+    'Resource type' = { param($r) $r.Type }
+    'Resources' = { param($r) $r.Resources }
+}) -Limit $Top)
+
+Validate application dependencies, data classification, external services, recovery tests, operational ownership, and WAF/WARA conclusions with workload owners.
 "@
 }
 else {
@@ -1206,6 +1472,88 @@ For every candidate, document the affected scope, expected target state, busines
 4. **P3 Optimization:** cost, automation, Infrastructure as Code, and operational maturity.
 "@
 Write-DocumentationPage '12-observations-and-next-steps' 'Observations and Next Steps' $observationsBody
+
+$serviceEstateBody = @"
+## Estate coverage
+
+$(New-MetricList ([ordered]@{
+    'Azure resources classified' = $serviceRows.Count
+    'Service categories represented' = $serviceSummary.Count
+    'Resource types represented' = @($serviceRows | ForEach-Object { $_.Type } | Sort-Object -Unique).Count
+    'Subscriptions represented' = @($serviceRows | ForEach-Object { $_.SubscriptionId } | Sort-Object -Unique).Count
+    'Regions represented' = @($serviceRows | ForEach-Object { $_.Region } | Where-Object { $_ } | Sort-Object -Unique).Count
+    'Resources reporting public network access enabled' = @($serviceRows | Where-Object PublicNetworkAccess -eq 'Enabled').Count
+}))
+
+## Azure service categories
+
+$(New-MarkdownTable $serviceSummary ([ordered]@{
+    'Category' = { param($r) $r.Category }
+    'Resources' = { param($r) $r.Resources }
+    'Subscriptions' = { param($r) $r.Subscriptions }
+    'Regions' = { param($r) $r.Regions }
+    'Public access enabled' = { param($r) $r.PublicAccessEnabled }
+    'Private Endpoints' = { param($r) $r.PrivateEndpoints }
+}))
+
+## Top resource types
+
+$(New-MarkdownTable $resourceTypes ([ordered]@{
+    'Resource type' = { param($r) $r.Type }
+    'Resources' = { param($r) $r.Count }
+}) -Limit $Top)
+
+## Coverage guide
+
+- [Compute and Containers](14-compute-and-containers.md)
+- [App Services and Integration](15-app-services-and-integration.md)
+- [Databases and Data Platforms](16-databases-and-data.md)
+- [AI and Machine Learning](17-ai-and-machine-learning.md)
+- [Storage, Messaging, and Events](18-storage-and-messaging.md)
+- [Network Architecture](06-network.md)
+- [Security Posture](07-security.md)
+- [Operations and Monitoring](08-operations.md)
+- [Resilience and Recovery](09-resilience.md)
+- [Cost Optimization](10-cost.md)
+
+This is a configuration inventory overview. Service-specific conclusions require validation against approved architecture, business criticality, runtime telemetry, data classification, recovery objectives, and current Microsoft service guidance.
+"@
+Write-DocumentationPage '13-service-estate' 'Azure Service Estate' $serviceEstateBody
+
+Write-DocumentationPage '14-compute-and-containers' 'Compute and Containers' (
+    New-ServiceInventoryBody -Rows $computeContainerRows `
+        -ScopeDescription 'Covers virtual machines, disks, scale sets, AKS, Container Apps, Container Instances, managed environments, and related compute/container resources.' `
+        -ValidationGuidance 'Validate supported images and runtimes, patching, disk encryption, managed identity, endpoint exposure, autoscaling, availability zones, node-pool design, upgrade policy, backup, Defender coverage, and capacity against workload requirements.' `
+        -Limit $Top
+)
+
+Write-DocumentationPage '15-app-services-and-integration' 'App Services and Integration' (
+    New-ServiceInventoryBody -Rows $appIntegrationRows `
+        -ScopeDescription 'Covers App Service, Functions, plans, Static Web Apps, API Management, Logic Apps, and Data Factory resources.' `
+        -ValidationGuidance 'Validate HTTPS-only and TLS settings, authentication, managed identity, VNet integration, Private Endpoints, access restrictions, health checks, Always On, deployment slots, scaling, runtime support, API policies, integration dependencies, diagnostics, and recovery design.' `
+        -Limit $Top
+)
+
+Write-DocumentationPage '16-databases-and-data' 'Databases and Data Platforms' (
+    New-ServiceInventoryBody -Rows $databaseDataRows `
+        -ScopeDescription 'Covers Azure SQL, PostgreSQL, MySQL, Cosmos DB, Redis, Synapse, Databricks, and related database/data resources.' `
+        -ValidationGuidance 'Validate Microsoft Entra authentication, local authentication restrictions, TLS, firewall and private access, auditing, Defender, encryption and key ownership, backup retention, geo-replication, failover, zone redundancy, capacity, maintenance windows, data residency, and tested recovery.' `
+        -Limit $Top
+)
+
+Write-DocumentationPage '17-ai-and-machine-learning' 'AI and Machine Learning' (
+    New-ServiceInventoryBody -Rows $aiRows `
+        -ScopeDescription 'Covers Azure AI Services and OpenAI accounts, model-hosting resources, Azure Machine Learning, Azure AI Search, and Bot Service.' `
+        -ValidationGuidance 'Validate key-based versus managed-identity authentication, private networking, approved outbound access, model deployments and quotas, content filtering, responsible-AI controls, data handling, prompt and response logging, AI Search replicas/partitions, workspace encryption, endpoint exposure, monitoring, and business continuity.' `
+        -Limit $Top
+)
+
+Write-DocumentationPage '18-storage-and-messaging' 'Storage, Messaging, and Events' (
+    New-ServiceInventoryBody -Rows $storageMessagingRows `
+        -ScopeDescription 'Covers Storage accounts, Service Bus, Event Hubs, Event Grid, Relay, Notification Hubs, and related messaging/event resources.' `
+        -ValidationGuidance 'Validate public access, firewall defaults, Private Endpoints, shared-key restrictions, minimum TLS, encryption and customer-managed keys, soft delete and versioning, replication, immutability, namespace authorization, local/SAS authentication, zone redundancy, geo-disaster recovery, retention, throughput, dead-letter handling, diagnostics, and consumer recovery.' `
+        -Limit $Top
+)
 
 $subscriptionRows = foreach ($subscription in $effectiveSubscriptions) {
     [pscustomobject]@{
@@ -1306,6 +1654,13 @@ $metadata = [ordered]@{
     Pages = $pages.Count
     Subscriptions = $effectiveSubscriptionIds.Count
     Resources = $resources.Count
+    ServiceCategories = $serviceSummary.Count
+    ComputeAndContainerResources = $computeContainerRows.Count
+    AppAndIntegrationResources = $appIntegrationRows.Count
+    DatabaseAndDataResources = $databaseDataRows.Count
+    AiAndMachineLearningResources = $aiRows.Count
+    StorageAndMessagingResources = $storageMessagingRows.Count
+    Workloads = $workloadScopes.Count
     ReviewCandidates = $observations.Count
     NetworkReviewCandidates = $networkFindings.Count
     ConnectedNetworkDevices = $networkTopologyModel.ConnectedDevices.Count

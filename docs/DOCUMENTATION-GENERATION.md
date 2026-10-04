@@ -35,6 +35,7 @@ Start-Process (Join-Path $evidencePath 'documentation\html\index.html')
 ```text
 documentation\
 ├── documentation-metadata.json
+├── azure-service-inventory.csv
 ├── network-topology.json
 ├── network-disconnected-devices.csv
 ├── html\
@@ -63,6 +64,12 @@ documentation\
 10. Cost Optimization
 11. Workload Assessment Status
 12. Observations and Next Steps
+13. Azure Service Estate
+14. Compute and Containers
+15. App Services and Integration
+16. Databases and Data Platforms
+17. AI and Machine Learning
+18. Storage, Messaging, and Events
 
 ## Detailed appendices
 
@@ -75,6 +82,8 @@ documentation\
 - Complete network best-practice finding register
 
 The Network Architecture chapter also includes normalized NSG rules, UDRs, VPN/ExpressRoute gateways, hybrid connections, ExpressRoute circuits, and the associated automated review candidates.
+
+The Azure Service Estate and service chapters classify the collected configuration across subscriptions and regions. They summarize resource type, SKU, kind, zones, managed identity, public access, Private Endpoint counts, and common configuration indicators. The complete normalized cross-service inventory is exported to `azure-service-inventory.csv`.
 
 ### Network topology diagram
 

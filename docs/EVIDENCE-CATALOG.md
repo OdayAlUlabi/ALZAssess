@@ -53,6 +53,7 @@ Directory: `02-resource-governance`
 | Output | Evidence |
 |---|---|
 | `resources.json` | Compact resource inventory: type, location, SKU, zones, identity type, tags, and provisioning state |
+| `resource-configurations.json` | Full Azure Resource Graph configuration representation used by the cross-service HTML overview |
 | `resource-summary.json` | Counts by subscription, type, and region |
 | `tag-coverage.json` | Tags and tag count per resource |
 | `policy-resources.json` | Resource Graph Policy records |

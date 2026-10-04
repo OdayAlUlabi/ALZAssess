@@ -18,6 +18,13 @@ resources
 | order by subscriptionId asc, resourceGroup asc, type asc, name asc
 '@ -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'resources.json') -Required $true | Out-Null
 
+Invoke-AzGraphQuery -Stage $stage -Name 'resource-configurations' -Query @'
+resources
+| project id, name, type, subscriptionId, resourceGroup, location, kind, sku, zones,
+          identity, tags, properties
+| order by subscriptionId asc, resourceGroup asc, type asc, name asc
+'@ -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'resource-configurations.json') | Out-Null
+
 Invoke-AzGraphQuery -Stage $stage -Name 'resource-summary' -Query @'
 resources
 | summarize ResourceCount=count() by subscriptionId, type, location

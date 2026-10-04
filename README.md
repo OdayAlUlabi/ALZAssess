@@ -132,6 +132,7 @@ Important files:
     ├── html\index.html
     ├── html\06-network.html
     ├── markdown\
+    ├── azure-service-inventory.csv
     ├── network-topology.json
     └── network-disconnected-devices.csv
 ```
@@ -144,6 +145,8 @@ The Network Architecture page includes:
 - NSG, UDR, VPN, ExpressRoute, Firewall, Private Endpoint, and flow-log evidence
 - A separate disconnected or unresolved device/link register
 - Network best-practice review candidates
+
+The documentation also provides tenant/subscription summaries, workload status, and dedicated estate chapters for compute, containers, App Service, Functions, integration, databases, data platforms, AI, Machine Learning, storage, messaging, and events.
 
 The diagram represents collected configuration relationships, not live packet reachability. Validate effective routes, effective security rules, observed traffic, provider diversity, and tested failover separately.
 

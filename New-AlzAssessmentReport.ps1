@@ -532,9 +532,10 @@ if ($untaggedResources.Count -gt 0) {
         -AssessmentAction 'Validate the required tag standard, exemptions, ownership, and enforcement policy before confirming a finding.'
 }
 
-$nonCompliantPolicyCount = ($policyCompliance |
-    Where-Object { $_.complianceState -eq 'NonCompliant' } |
-    Measure-Object -Property Count -Sum).Sum
+$nonCompliantPolicyCount = 0
+foreach ($policyState in @($policyCompliance | Where-Object { $_.complianceState -eq 'NonCompliant' })) {
+    $nonCompliantPolicyCount += [int]$policyState.Count
+}
 if ($nonCompliantPolicyCount -gt 0) {
     Add-Observation -Area 'Governance' -SuggestedPriority 'Medium' `
         -Title 'Azure Policy reports noncompliant records' -Count ([int]$nonCompliantPolicyCount) `

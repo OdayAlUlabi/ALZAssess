@@ -5,6 +5,217 @@ if ($PSVersionTable.PSVersion -lt [version]'7.3') {
     throw "PowerShell 7.3 or later is required. Current version: $($PSVersionTable.PSVersion). Run the collector with 'pwsh', not 'powershell.exe'."
 }
 
+$script:ProhibitedEvidenceFieldNames = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+)
+@(
+    'secretText'
+    'connectionString'
+    'connectionStrings'
+    'primaryConnectionString'
+    'secondaryConnectionString'
+    'sharedAccessKey'
+    'sharedAccessKeyValue'
+    'accountKey'
+    'primaryKey'
+    'secondaryKey'
+    'clientSecret'
+    'privateKey'
+    'password'
+    'accessToken'
+    'authorization'
+    'authorizationHeader'
+    'sasToken'
+    'sharedAccessSignature'
+) | ForEach-Object { $script:ProhibitedEvidenceFieldNames.Add($_) | Out-Null }
+
+function Test-ProhibitedEvidenceFieldName {
+    param([Parameter(Mandatory)][string]$Name)
+
+    return $script:ProhibitedEvidenceFieldNames.Contains($Name)
+}
+
+function Protect-SensitiveText {
+    param([AllowEmptyString()][AllowNull()][string]$Text)
+
+    if (-not $Text) {
+        return $Text
+    }
+
+    $protected = $Text
+    $fieldAlternation = ($script:ProhibitedEvidenceFieldNames |
+        ForEach-Object { [regex]::Escape($_) }) -join '|'
+    $assignmentPattern = "(?i)(?:[`"']?(?:$fieldAlternation)[`"']?\s*[:=]\s*)(?:`"[^`"]*`"|'[^']*'|[^\s,;]+)"
+    $protected = [regex]::Replace($protected, $assignmentPattern, '[REDACTED]')
+    $protected = [regex]::Replace($protected, '(?i)\bBearer\s+[A-Za-z0-9\-._~+/]+=*', 'Bearer [REDACTED]')
+    $protected = [regex]::Replace(
+        $protected,
+        '(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----',
+        '[REDACTED PRIVATE KEY]'
+    )
+    return $protected
+}
+
+function Protect-EvidenceData {
+    param([AllowNull()]$Data)
+
+    if ($null -eq $Data) {
+        return $null
+    }
+    if ($Data -is [string] -or $Data.GetType().IsPrimitive -or
+        $Data -is [decimal] -or $Data -is [datetime] -or
+        $Data -is [datetimeoffset] -or $Data -is [guid] -or
+        $Data.GetType().IsEnum) {
+        return $Data
+    }
+    if ($Data -is [System.Collections.IDictionary]) {
+        $sanitized = [ordered]@{}
+        foreach ($entry in $Data.GetEnumerator()) {
+            $name = [string]$entry.Key
+            if (-not (Test-ProhibitedEvidenceFieldName $name)) {
+                $sanitized[$name] = Protect-EvidenceData $entry.Value
+            }
+        }
+        return $sanitized
+    }
+    if ($Data -is [System.Collections.IEnumerable]) {
+        $sanitizedItems = [System.Collections.Generic.List[object]]::new()
+        foreach ($item in $Data) {
+            $sanitizedItems.Add((Protect-EvidenceData $item))
+        }
+        return ,$sanitizedItems.ToArray()
+    }
+
+    $properties = @($Data.PSObject.Properties | Where-Object MemberType -in @('NoteProperty', 'Property'))
+    if ($properties.Count -gt 0) {
+        $sanitized = [ordered]@{}
+        foreach ($property in $properties) {
+            if (-not (Test-ProhibitedEvidenceFieldName $property.Name)) {
+                $sanitized[$property.Name] = Protect-EvidenceData $property.Value
+            }
+        }
+        return $sanitized
+    }
+    return $Data
+}
+
+function Get-ProhibitedEvidenceFields {
+    param(
+        [AllowNull()]$Data,
+        [string]$Path = '$'
+    )
+
+    $findings = [System.Collections.Generic.List[string]]::new()
+    if ($null -eq $Data -or $Data -is [string] -or $Data -is [System.ValueType]) {
+        return $findings.ToArray()
+    }
+    if ($Data -is [System.Collections.IDictionary]) {
+        foreach ($entry in $Data.GetEnumerator()) {
+            $name = [string]$entry.Key
+            $childPath = "$Path.$name"
+            if (Test-ProhibitedEvidenceFieldName $name) {
+                $findings.Add($childPath)
+            }
+            foreach ($finding in @(Get-ProhibitedEvidenceFields -Data $entry.Value -Path $childPath)) {
+                $findings.Add($finding)
+            }
+        }
+        return $findings.ToArray()
+    }
+    if ($Data -is [System.Collections.IEnumerable]) {
+        $index = 0
+        foreach ($item in $Data) {
+            foreach ($finding in @(Get-ProhibitedEvidenceFields -Data $item -Path "$Path[$index]")) {
+                $findings.Add($finding)
+            }
+            $index++
+        }
+        return $findings.ToArray()
+    }
+    foreach ($property in @($Data.PSObject.Properties | Where-Object MemberType -in @('NoteProperty', 'Property'))) {
+        $childPath = "$Path.$($property.Name)"
+        if (Test-ProhibitedEvidenceFieldName $property.Name) {
+            $findings.Add($childPath)
+        }
+        foreach ($finding in @(Get-ProhibitedEvidenceFields -Data $property.Value -Path $childPath)) {
+            $findings.Add($finding)
+        }
+    }
+    return $findings.ToArray()
+}
+
+function Assert-NoProhibitedEvidenceData {
+    param([Parameter(Mandatory)][string]$RootPath)
+
+    $violations = [System.Collections.Generic.List[string]]::new()
+    $jsonFiles = Get-ChildItem -LiteralPath $RootPath -File -Recurse -Filter '*.json' -ErrorAction Stop
+    foreach ($file in $jsonFiles) {
+        try {
+            $data = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100 -NoEnumerate
+        }
+        catch {
+            throw "Unable to validate JSON evidence '$($file.FullName)': $($_.Exception.Message)"
+        }
+        foreach ($fieldPath in @(Get-ProhibitedEvidenceFields $data)) {
+            $violations.Add("$($file.FullName):$fieldPath")
+        }
+    }
+
+    $secretSignatures = @(
+        '(?i)\bBearer\s+(?!\[REDACTED\])[A-Za-z0-9\-._~+/]{20,}=*'
+        '(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----'
+        '(?i)(?:AccountKey|SharedAccessKey|ClientSecret|AccessToken|SecretText|ConnectionString)\s*[:=]\s*(?!\[REDACTED\])[^,;\r\n]{6,}'
+    )
+    $textFiles = Get-ChildItem -LiteralPath $RootPath -File -Recurse |
+        Where-Object Extension -in @('.csv', '.log', '.txt', '.md', '.html')
+    foreach ($file in $textFiles) {
+        foreach ($pattern in $secretSignatures) {
+            if (Select-String -LiteralPath $file.FullName -Pattern $pattern -Quiet) {
+                $violations.Add("$($file.FullName):secret-value-signature")
+                break
+            }
+        }
+    }
+
+    if ($violations.Count -gt 0) {
+        throw "Prohibited sensitive data was detected. Evidence indexing stopped. Review: $($violations -join '; ')"
+    }
+}
+
+function Protect-EvidenceFiles {
+    param([Parameter(Mandatory)][string]$RootPath)
+
+    $sanitizedFiles = [System.Collections.Generic.List[string]]::new()
+    foreach ($file in @(Get-ChildItem -LiteralPath $RootPath -File -Recurse -Filter '*.json' -ErrorAction Stop)) {
+        try {
+            $data = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json -Depth 100 -NoEnumerate
+        }
+        catch {
+            throw "Unable to sanitize JSON evidence '$($file.FullName)': $($_.Exception.Message)"
+        }
+        if (@(Get-ProhibitedEvidenceFields $data).Count -gt 0) {
+            Save-Json -Data $data -Path $file.FullName
+            $sanitizedFiles.Add($file.FullName)
+        }
+    }
+
+    $textFiles = Get-ChildItem -LiteralPath $RootPath -File -Recurse |
+        Where-Object Extension -in @('.csv', '.log', '.txt', '.md', '.html')
+    foreach ($file in $textFiles) {
+        $content = Get-Content -LiteralPath $file.FullName -Raw
+        $protected = Protect-SensitiveText $content
+        if ($protected -cne $content) {
+            [System.IO.File]::WriteAllText(
+                $file.FullName,
+                $protected,
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            $sanitizedFiles.Add($file.FullName)
+        }
+    }
+    return $sanitizedFiles.ToArray()
+}
+
 function Initialize-CollectionContext {
     param(
         [Parameter(Mandatory)][string]$OutputRoot,
@@ -33,7 +244,8 @@ function Write-CollectionLog {
         [Parameter(Mandatory)][string]$Message
     )
 
-    $entry = '{0:u} [{1}] {2}' -f (Get-Date), $Level, $Message
+    $safeMessage = Protect-SensitiveText $Message
+    $entry = '{0:u} [{1}] {2}' -f (Get-Date), $Level, $safeMessage
     Write-Host $entry
     Add-Content -LiteralPath $script:CollectionContext.LogPath -Value $entry -Encoding utf8
 }
@@ -51,10 +263,10 @@ function Add-CollectionError {
         Stage        = $Stage
         Item         = $Item
         Required     = $Required
-        Error        = $Message
+        Error        = Protect-SensitiveText $Message
     } | Export-Csv -LiteralPath $script:CollectionContext.ErrorPath -NoTypeInformation -Append -Encoding utf8
 
-    Write-CollectionLog -Level ERROR -Message "[$Stage/$Item] $Message"
+    Write-CollectionLog -Level ERROR -Message "[$Stage/$Item] $(Protect-SensitiveText $Message)"
 }
 
 function Save-Json {
@@ -65,7 +277,8 @@ function Save-Json {
 
     $parent = Split-Path -Parent $Path
     New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    ConvertTo-Json -InputObject $Data -Depth 100 | Set-Content -LiteralPath $Path -Encoding utf8
+    $sanitizedData = Protect-EvidenceData $Data
+    ConvertTo-Json -InputObject $sanitizedData -Depth 100 | Set-Content -LiteralPath $Path -Encoding utf8
 }
 
 function Invoke-AzCliJson {
@@ -90,8 +303,9 @@ function Invoke-AzCliJson {
 
     try {
         $data = ($output -join [Environment]::NewLine) | ConvertFrom-Json -Depth 100 -NoEnumerate
-        Save-Json -Data $data -Path $OutputPath
-        return $data
+        $result = Protect-EvidenceData $data
+        Save-Json -Data $result -Path $OutputPath
+        return $result
     }
     catch {
         Add-CollectionError -Stage $Stage -Item $Name -Message "Azure CLI returned invalid JSON: $($_.Exception.Message)" -Required $Required
@@ -183,7 +397,7 @@ function Invoke-AzRestPaged {
         }
     }
 
-    $result = $items.ToArray()
+    $result = Protect-EvidenceData $items.ToArray()
     Save-Json -Data $result -Path $OutputPath
     return $result
 }
@@ -266,7 +480,7 @@ function Invoke-AzGraphQuery {
         }
     } while ($skipToken)
 
-    $result = $items.ToArray()
+    $result = Protect-EvidenceData $items.ToArray()
     Save-Json -Data $result -Path $OutputPath
     $stopwatch.Stop()
     Write-CollectionLog -Level INFO -Message "Collected $Name ($($result.Count) records in $([math]::Round($stopwatch.Elapsed.TotalSeconds, 1)) seconds)"

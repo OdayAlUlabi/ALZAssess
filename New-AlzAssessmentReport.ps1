@@ -15,6 +15,9 @@ if (-not (Test-Path -LiteralPath $evidenceRoot -PathType Container)) {
     throw "Evidence directory not found: $evidenceRoot"
 }
 
+. (Join-Path $PSScriptRoot 'Private\Common.ps1')
+Assert-NoProhibitedEvidenceData -RootPath $evidenceRoot
+
 if (-not $ReportPath) {
     $ReportPath = Join-Path $evidenceRoot 'reports'
 }
@@ -934,5 +937,6 @@ $reportMetadata = [ordered]@{
 ConvertTo-Json -InputObject $reportMetadata -Depth 10 |
     Set-Content -LiteralPath (Join-Path $reportRoot 'report-metadata.json') -Encoding utf8
 
+Assert-NoProhibitedEvidenceData -RootPath $reportRoot
 Write-Host "Report generated: $reportFile" -ForegroundColor Green
 Write-Host "CSV exports: $csvRoot"

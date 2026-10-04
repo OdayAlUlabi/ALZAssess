@@ -112,6 +112,21 @@ The explicit skip switches can suppress data from any profile.
 - Does not retry permanent 4xx authorization failures.
 - Removes certificate `key` and password `secretText` fields in credential-metadata mode.
 
+### Sensitive-data enforcement
+
+`Save-Json` recursively removes prohibited secret-bearing properties before serialization. Property matching is case-insensitive and covers password, token, authorization, connection-string, shared-access, account-key, client-secret, private-key, SAS, and common primary/secondary variants.
+
+`Write-CollectionLog` and `Add-CollectionError` redact recognizable bearer tokens, private-key blocks, connection strings, and secret assignments before writing text.
+
+Before building hashes, stage 10:
+
+1. Sanitizes existing JSON and supported text evidence in place.
+2. Parses every JSON file and rejects any remaining prohibited property.
+3. Scans persisted CSV, log, text, HTML, and Markdown files for recognizable secret signatures.
+4. Stops evidence-index generation if validation fails.
+
+This gate also protects resumed collections and output produced before the centralized sanitizer was introduced.
+
 ### Resource diagnostic settings
 
 Full-profile per-resource diagnostic collection:

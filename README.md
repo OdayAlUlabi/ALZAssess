@@ -175,7 +175,7 @@ An empty or missing evidence file is not proof of compliance. Review `_collectio
 - `Directory Readers` or equivalent Microsoft Graph permissions for Entra evidence
 - `Cost Management Reader` for complete cost evidence
 
-The collector does not export secret or certificate values. Microsoft Graph evidence includes credential identifiers and expiration metadata only.
+The collector recursively removes prohibited secret-bearing fields before every JSON write and redacts secret signatures from persisted logs and errors. Stage 10 sanitizes existing evidence, validates the full output tree, and stops before indexing if any prohibited field or recognizable bearer token, private key, connection string, or secret assignment remains. Microsoft Graph evidence includes credential identifiers and expiration metadata only.
 
 ## Detailed guides
 

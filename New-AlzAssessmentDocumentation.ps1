@@ -15,6 +15,9 @@ if (-not (Test-Path -LiteralPath $evidenceRoot -PathType Container)) {
     throw "Evidence directory not found: $evidenceRoot"
 }
 
+. (Join-Path $PSScriptRoot 'Private\Common.ps1')
+Assert-NoProhibitedEvidenceData -RootPath $evidenceRoot
+
 if (-not $DocumentationPath) {
     $DocumentationPath = Join-Path $evidenceRoot 'documentation'
 }
@@ -1672,5 +1675,6 @@ $metadata = [ordered]@{
 ConvertTo-Json -InputObject $metadata -Depth 10 |
     Set-Content -LiteralPath (Join-Path $documentationRoot 'documentation-metadata.json') -Encoding utf8
 
+Assert-NoProhibitedEvidenceData -RootPath $documentationRoot
 Write-Host "Documentation generated: $(Join-Path $htmlRoot 'index.html')" -ForegroundColor Green
 Write-Host "Markdown source: $markdownRoot"

@@ -65,12 +65,26 @@ Application and service principal evidence can contain credential metadata such 
 - Credential type
 - Certificate thumbprint/custom identifier
 
-Before saving, the collector removes:
+Credential-metadata collection removes certificate bodies and password values. In addition, the centralized evidence sanitizer recursively removes these prohibited fields, case-insensitively, before every JSON write:
 
-- `key`
 - `secretText`
+- `connectionString` and connection-string variants
+- `sharedAccessKey`
+- `accountKey` and primary/secondary key variants
+- `clientSecret`
+- `privateKey`
+- `password`
+- `accessToken`
+- `authorization` and authorization-header variants
+- SAS token and shared-access-signature variants
 
-No credential value should appear in the output. Treat credential metadata as sensitive because it reveals identity inventory and expiration posture.
+Non-secret credential metadata such as credential IDs, dates, and certificate thumbprints is retained. A generic field named `key` is not removed globally because Azure uses it for non-secret identifiers and metadata; certificate bodies are removed by the Microsoft Graph credential-metadata collector.
+
+Persisted log and error text is also redacted when it contains bearer tokens, private-key blocks, connection strings, or assignments to prohibited names.
+
+Stage 10 applies the sanitizer to existing JSON, CSV, log, text, Markdown, and HTML evidence before hashing. It then validates the entire evidence tree and stops index generation if a prohibited JSON property or recognizable secret signature remains. This provides defense in depth for resumed runs and evidence collected by an earlier version.
+
+No credential value should appear in the output. Treat retained credential metadata as sensitive because it reveals identity inventory and expiration posture.
 
 ## 6. Other sensitive evidence
 
@@ -122,7 +136,7 @@ The collector does not enforce retention or deletion.
 
 ## 9. Log hygiene
 
-Collection errors can include API response details. Review `_collection-errors.csv` before sharing it externally.
+Collection errors can include API response details. The collector redacts recognized secret assignments and signatures before persisting errors, but you should still review `_collection-errors.csv` before sharing it externally.
 
 Do not add debug logging that prints:
 
@@ -144,7 +158,7 @@ Get-FileHash `
 
 Compare the result with `10-evidence-index\evidence-index.csv`.
 
-The index proves file consistency from the time it was generated; it does not provide signer identity or nonrepudiation.
+Stage 10 does not generate the index unless sensitive-data validation passes. The index proves file consistency from the time it was generated; it does not provide signer identity or nonrepudiation.
 
 ## 11. Incident handling
 

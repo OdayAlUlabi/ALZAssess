@@ -4,6 +4,7 @@
 param(
     [Parameter(Mandatory)][string]$EvidencePath,
     [string]$DocumentationPath,
+    [string[]]$ExcludeSubscriptionId = @(),
     [ValidateRange(5, 100)][int]$Top = 20
 )
 
@@ -27,6 +28,34 @@ $htmlRoot = Join-Path $documentationRoot 'html'
 New-Item -ItemType Directory -Path $markdownRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $htmlRoot -Force | Out-Null
 
+$excludedSubscriptionIds = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+)
+foreach ($subscriptionId in $ExcludeSubscriptionId) {
+    if (-not [string]::IsNullOrWhiteSpace($subscriptionId)) {
+        $null = $excludedSubscriptionIds.Add($subscriptionId.Trim())
+    }
+}
+
+function Test-IsExcludedSubscriptionItem {
+    param([AllowNull()]$Item)
+
+    if ($null -eq $Item -or $excludedSubscriptionIds.Count -eq 0) {
+        return $false
+    }
+    foreach ($property in @($Item.PSObject.Properties | Where-Object MemberType -in @('NoteProperty', 'Property'))) {
+        if ($property.Value -isnot [string]) {
+            continue
+        }
+        foreach ($subscriptionId in $excludedSubscriptionIds) {
+            if ($property.Value.IndexOf($subscriptionId, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
 function Get-JsonItems {
     param(
         [Parameter(Mandatory)][string]$RelativePath,
@@ -43,7 +72,9 @@ function Get-JsonItems {
 
     $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 100
     foreach ($item in @($data)) {
-        Write-Output $item
+        if (-not (Test-IsExcludedSubscriptionItem $item)) {
+            Write-Output $item
+        }
     }
 }
 
@@ -52,7 +83,8 @@ function Get-CsvItems {
 
     $path = Join-Path $evidenceRoot $RelativePath
     if (Test-Path -LiteralPath $path) {
-        Import-Csv -LiteralPath $path
+        Import-Csv -LiteralPath $path |
+            Where-Object { -not (Test-IsExcludedSubscriptionItem $_) }
     }
 }
 
@@ -556,6 +588,9 @@ function New-NetworkTopologyModel {
             $properties = Get-DocPropertyValue $peering 'properties'
             $remote = Get-DocPropertyValue $properties 'remoteVirtualNetwork'
             $remoteId = [string](Get-DocPropertyValue $remote 'id' '')
+            if ($remoteId -and (Test-IsExcludedSubscriptionItem ([pscustomobject]@{ id = $remoteId }))) {
+                continue
+            }
             $state = [string](Get-DocPropertyValue $properties 'peeringState' 'Unknown')
             $pairKey = @([string]$vnet.id, $remoteId | Sort-Object) -join '|'
             if ($state -ieq 'Connected' -and $remoteId) {
@@ -819,7 +854,15 @@ $reportGenerator = Join-Path $PSScriptRoot 'New-AlzAssessmentReport.ps1'
 if (-not (Test-Path -LiteralPath $reportGenerator)) {
     throw "Report generator not found: $reportGenerator"
 }
-& $reportGenerator -EvidencePath $evidenceRoot -ReportPath (Join-Path $evidenceRoot 'reports') -Top $Top
+$reportParameters = @{
+    EvidencePath = $evidenceRoot
+    ReportPath   = Join-Path $evidenceRoot 'reports'
+    Top          = $Top
+}
+if ($excludedSubscriptionIds.Count -gt 0) {
+    $reportParameters.ExcludeSubscriptionId = @($excludedSubscriptionIds)
+}
+& $reportGenerator @reportParameters
 
 $scope = @(Get-JsonItems '00-prerequisites\collection-scope.json' -Optional) | Select-Object -First 1
 $tenants = @(Get-JsonItems '01-tenant-hierarchy\tenants.json' -Optional)
@@ -867,7 +910,7 @@ if ($resourceConfigurations.Count -eq 0) {
 }
 
 $effectiveSubscriptionIds = if ($scope -and $scope.PSObject.Properties['Subscriptions'] -and $scope.Subscriptions) {
-    @($scope.Subscriptions)
+    @($scope.Subscriptions | Where-Object { -not $excludedSubscriptionIds.Contains([string]$_) })
 }
 else {
     @($resources.subscriptionId | Where-Object { $_ } | Sort-Object -Unique)
@@ -918,11 +961,13 @@ $workloadPath = Join-Path $evidenceRoot '09-workloads'
 if (Test-Path -LiteralPath $workloadPath) {
     $workloadScopes = @(
         Get-ChildItem -LiteralPath $workloadPath -Filter '*-scope.json' -File -ErrorAction SilentlyContinue |
-            ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 30 }
+            ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 30 } |
+            Where-Object { -not (Test-IsExcludedSubscriptionItem $_) }
     )
     $workloadResourceRecords = @(
         Get-ChildItem -LiteralPath $workloadPath -Filter '*-resources.json' -File -ErrorAction SilentlyContinue |
-            ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 100 }
+            ForEach-Object { Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 100 } |
+            Where-Object { -not (Test-IsExcludedSubscriptionItem $_) }
     )
 }
 $resourceGroups = @($resourceContainers | Where-Object { $_.type -eq 'microsoft.resources/subscriptions/resourcegroups' })

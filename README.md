@@ -70,6 +70,21 @@ Open the network topology directly:
 Start-Process (Join-Path $outputPath 'documentation\html\06-network.html')
 ```
 
+To omit subscriptions and all directly associated resource, security, network, operations, resilience, cost, and workload records from generated reports:
+
+```powershell
+$excludedSubscriptionIds = @(
+  '<subscription-id-to-exclude>'
+)
+
+& '.\New-AlzAssessmentDocumentation.ps1' `
+  -EvidencePath $outputPath `
+  -ExcludeSubscriptionId $excludedSubscriptionIds `
+  -Top 25
+```
+
+This filters generated documentation and reports only. It does not delete or modify the source evidence.
+
 The documentation generator also creates the HTML dashboard and CSV exports. You do not need to run `New-AlzAssessmentReport.ps1` separately.
 
 ## Optional workloads

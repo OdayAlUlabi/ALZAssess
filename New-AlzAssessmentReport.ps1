@@ -4,6 +4,7 @@
 param(
     [Parameter(Mandatory)][string]$EvidencePath,
     [string]$ReportPath,
+    [string[]]$ExcludeSubscriptionId = @(),
     [ValidateRange(5, 100)][int]$Top = 15
 )
 
@@ -25,6 +26,34 @@ $reportRoot = [System.IO.Path]::GetFullPath($ReportPath)
 $csvRoot = Join-Path $reportRoot 'csv'
 New-Item -ItemType Directory -Path $csvRoot -Force | Out-Null
 
+$excludedSubscriptionIds = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::OrdinalIgnoreCase
+)
+foreach ($subscriptionId in $ExcludeSubscriptionId) {
+    if (-not [string]::IsNullOrWhiteSpace($subscriptionId)) {
+        $null = $excludedSubscriptionIds.Add($subscriptionId.Trim())
+    }
+}
+
+function Test-IsExcludedSubscriptionItem {
+    param([AllowNull()]$Item)
+
+    if ($null -eq $Item -or $excludedSubscriptionIds.Count -eq 0) {
+        return $false
+    }
+    foreach ($property in @($Item.PSObject.Properties | Where-Object MemberType -in @('NoteProperty', 'Property'))) {
+        if ($property.Value -isnot [string]) {
+            continue
+        }
+        foreach ($subscriptionId in $excludedSubscriptionIds) {
+            if ($property.Value.IndexOf($subscriptionId, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
 function Get-JsonItems {
     param(
         [Parameter(Mandatory)][string]$RelativePath,
@@ -42,7 +71,9 @@ function Get-JsonItems {
     try {
         $data = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 100
         foreach ($item in @($data)) {
-            Write-Output $item
+            if (-not (Test-IsExcludedSubscriptionItem $item)) {
+                Write-Output $item
+            }
         }
     }
     catch {
@@ -198,7 +229,8 @@ $resourceGroups = @(
     Get-ChildItem -LiteralPath (Join-Path $evidenceRoot '01-tenant-hierarchy') -Filter 'resource-groups-*.json' -File -ErrorAction SilentlyContinue |
         ForEach-Object {
             Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json -Depth 100
-        }
+        } |
+        Where-Object { -not (Test-IsExcludedSubscriptionItem $_) }
 )
 $resources = @(Get-JsonItems -RelativePath '02-resource-governance\resources.json' -Optional)
 $tagCoverage = @(Get-JsonItems -RelativePath '02-resource-governance\tag-coverage.json' -Optional)
@@ -225,13 +257,14 @@ $orphanCandidates = @(Get-JsonItems -RelativePath '08-cost-optimization\potentia
 $errorPath = Join-Path $evidenceRoot '_collection-errors.csv'
 $collectionErrors = @(
     if (Test-Path -LiteralPath $errorPath) {
-        Import-Csv -LiteralPath $errorPath
+        Import-Csv -LiteralPath $errorPath |
+            Where-Object { -not (Test-IsExcludedSubscriptionItem $_) }
     }
 )
 $diagnosticsPath = Join-Path $evidenceRoot '06-operations\resource-diagnostic-settings.json'
 
 $effectiveSubscriptions = if ($scope -and $scope.Subscriptions) {
-    @($scope.Subscriptions)
+    @($scope.Subscriptions | Where-Object { -not $excludedSubscriptionIds.Contains([string]$_) })
 }
 else {
     @($resources.subscriptionId | Where-Object { $_ } | Sort-Object -Unique)

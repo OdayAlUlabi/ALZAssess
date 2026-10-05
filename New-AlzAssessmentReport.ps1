@@ -439,9 +439,9 @@ $subscriptionExport = foreach ($subscriptionId in $effectiveSubscriptions) {
     $subscription = $subscriptions | Where-Object { $_.id -eq $subscriptionId } | Select-Object -First 1
     [pscustomobject]@{
         SubscriptionId = $subscriptionId
-        Name           = $subscription.name
-        State          = $subscription.state
-        TenantId       = $subscription.tenantId
+        Name           = if ($subscription) { $subscription.name } else { $subscriptionId }
+        State          = if ($subscription) { $subscription.state } else { 'Unknown' }
+        TenantId       = if ($subscription) { $subscription.tenantId } else { $null }
         ResourceCount  = @($resources | Where-Object { $_.subscriptionId -eq $subscriptionId }).Count
         ResourceGroups = @($resourceGroups | Where-Object { $_.id -like "/subscriptions/$subscriptionId/*" }).Count
     }

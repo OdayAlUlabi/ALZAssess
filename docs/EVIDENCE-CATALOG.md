@@ -30,6 +30,7 @@ Directory: `01-tenant-hierarchy`
 |---|---|
 | `tenants.json` | Visible Azure tenants |
 | `management-groups.json` | Management groups visible to the identity |
+| `management-group-hierarchy.json` | Expanded recursive parent/child management-group and subscription hierarchy |
 | `subscriptions.json` | Subscription metadata |
 | `resource-groups-<subscription>.json` | Resource groups by subscription |
 | `resource-containers.json` | Cross-subscription container hierarchy data |

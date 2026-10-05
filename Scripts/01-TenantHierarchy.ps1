@@ -12,9 +12,22 @@ $stage = '01-tenant-hierarchy'
 
 Invoke-AzCliJson -Stage $stage -Name 'tenants' -Arguments @('account', 'tenant', 'list') `
     -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'tenants.json') | Out-Null
-Invoke-AzCliJson -Stage $stage -Name 'management-groups' `
+$managementGroups = @(Invoke-AzCliJson -Stage $stage -Name 'management-groups' `
     -Arguments @('account', 'management-group', 'list') `
-    -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'management-groups.json') | Out-Null
+    -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'management-groups.json'))
+
+$rootManagementGroup = $managementGroups |
+    Where-Object { $_.name -and $_.tenantId -and $_.name -eq $_.tenantId } |
+    Select-Object -First 1
+if ($rootManagementGroup) {
+    Invoke-AzCliJson -Stage $stage -Name 'management-group-hierarchy' `
+        -Arguments @('account', 'management-group', 'show', '--name', $rootManagementGroup.name, '--expand', '--recurse') `
+        -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'management-group-hierarchy.json') | Out-Null
+}
+else {
+    Add-CollectionError -Stage $stage -Item 'management-group-hierarchy' `
+        -Message 'The tenant root management group is not visible. Assign Reader at the tenant root management group to collect the complete hierarchy.'
+}
 Invoke-AzCliJson -Stage $stage -Name 'subscriptions' -Arguments @('account', 'list', '--all') `
     -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'subscriptions.json') -Required $true | Out-Null
 

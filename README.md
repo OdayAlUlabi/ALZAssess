@@ -33,7 +33,7 @@ if ($subscriptionIds.Count -eq 0) {
 $subscriptions | Sort-Object name | Format-Table name, id, state -AutoSize
 Write-Host "Subscriptions loaded: $($subscriptionIds.Count)" -ForegroundColor Green
 
-$outputPath = ".\output\assessment-$(Get-Date -Format 'yyyy-MM-dd')"
+$outputPath = ".\output\assessment-$(Get-Date -Format 'yyyy-MM-dd-HHmmss')"
 ```
 
 Review the displayed list before continuing. Remove IDs from `$subscriptionIds` if the assessment should cover only part of the tenant.
@@ -51,6 +51,8 @@ Review the displayed list before continuing. Remove IDs from `$subscriptionIds` 
 This runs platform stages 0-8, skips workload stage 9, and runs stage 10 to build the evidence index.
 
 Use the call operator `&`. Without it, PowerShell treats the quoted script path as text and reports `Unexpected token '-SubscriptionId'`.
+
+For a fresh collection, Step 1 creates a unique timestamped output path. If Step 2 is interrupted, keep the same `$outputPath` and rerun Step 2 with `-Resume`. The collector refuses to overwrite a non-empty output directory unless `-Resume` is specified.
 
 ### 3. Generate and open the documentation
 

@@ -19,6 +19,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
+if (-not $Resume -and (Test-Path -LiteralPath $resolvedOutput -PathType Container) -and
+    (Get-ChildItem -LiteralPath $resolvedOutput -Force | Select-Object -First 1)) {
+    throw "Output directory is not empty: $resolvedOutput. Use a new -OutputPath for a fresh collection, or add -Resume to continue this collection."
+}
 New-Item -ItemType Directory -Path $resolvedOutput -Force | Out-Null
 
 $effectiveSkipDirectoryData = $SkipDirectoryData -or $Profile -eq 'Fast'

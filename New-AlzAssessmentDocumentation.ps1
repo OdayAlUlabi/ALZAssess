@@ -872,7 +872,21 @@ $effectiveSubscriptionIds = if ($scope -and $scope.PSObject.Properties['Subscrip
 else {
     @($resources.subscriptionId | Where-Object { $_ } | Sort-Object -Unique)
 }
-$effectiveSubscriptions = @($subscriptions | Where-Object { $_.id -in $effectiveSubscriptionIds })
+$effectiveSubscriptions = foreach ($subscriptionId in $effectiveSubscriptionIds) {
+    $subscription = $subscriptions | Where-Object { $_.id -eq $subscriptionId } | Select-Object -First 1
+    if ($subscription) {
+        $subscription
+    }
+    else {
+        [pscustomobject]@{
+            id       = $subscriptionId
+            name     = $subscriptionId
+            state    = 'Unknown'
+            tenantId = $null
+        }
+    }
+}
+$effectiveSubscriptions = @($effectiveSubscriptions)
 $subscriptionNames = @{}
 foreach ($subscription in $effectiveSubscriptions) {
     $subscriptionNames[[string]$subscription.id] = [string]$subscription.name

@@ -20,8 +20,13 @@ $version = Invoke-AzCliJson -Stage $stage -Name 'azure-cli-version' -Arguments @
 $account = Invoke-AzCliJson -Stage $stage -Name 'current-account' -Arguments @('account', 'show') `
     -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'current-account.json') -Required $true
 
-Invoke-AzCliJson -Stage $stage -Name 'azure-cli-extensions' -Arguments @('extension', 'list') `
-    -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'azure-cli-extensions.json') -Required $true | Out-Null
+$extensions = @(Invoke-AzCliJson -Stage $stage -Name 'azure-cli-extensions' -Arguments @('extension', 'list') `
+    -OutputPath (Get-StageOutputPath -Stage $stage -FileName 'azure-cli-extensions.json') -Required $true)
+if (-not ($extensions | Where-Object name -EQ 'account')) {
+    $message = "Required Azure CLI extension 'account' is not installed. Run: az extension add --name account --yes --only-show-errors"
+    Add-CollectionError -Stage $stage -Item 'account-extension' -Message $message -Required $true
+    throw $message
+}
 
 $subscriptions = @(Get-Subscriptions)
 if ($subscriptions.Count -eq 0) {

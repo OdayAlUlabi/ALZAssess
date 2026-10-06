@@ -187,6 +187,8 @@ An empty or missing evidence file is not proof of compliance. Review `_collectio
 
 - PowerShell 7.3 or later
 - Azure CLI
+- Azure CLI `account` extension:
+  `az extension add --name account --yes --only-show-errors`
 - `Reader` on assessed Azure scopes
 - `Security Reader` for complete Defender evidence
 - `Directory Readers` or equivalent Microsoft Graph permissions for Entra evidence

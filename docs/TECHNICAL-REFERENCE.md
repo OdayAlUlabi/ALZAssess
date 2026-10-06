@@ -85,11 +85,14 @@ The explicit skip switches can suppress data from any profile.
 
 `Invoke-AzCliJson`:
 
+- Disables Azure CLI dynamic extension installation for each invocation.
 - Adds `--only-show-errors --output json`.
 - Parses JSON without enumerating empty arrays.
 - Saves normalized JSON.
 - Records failures in `_collection-errors.csv`.
 - Throws only for required evidence.
+
+Stage 00 requires the Azure CLI `account` extension because stage 01 uses `az account tenant list`. If it is absent, collection stops with the non-interactive installation command instead of allowing Azure CLI to display an installation prompt.
 
 ### Resource Graph
 

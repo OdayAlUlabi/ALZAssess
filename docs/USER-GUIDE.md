@@ -16,6 +16,7 @@ It does not determine compliance automatically. The output is evidence that an a
 
 - Windows with PowerShell 7.3 or later
 - Azure CLI available in `PATH`
+- Azure CLI `account` extension
 - Network access to Azure Resource Manager and Microsoft Graph
 - An Azure identity with read access to the selected scope
 
@@ -24,6 +25,8 @@ Confirm the local tools:
 ```powershell
 $PSVersionTable.PSVersion
 az version
+az extension add --name account --yes --only-show-errors
+az extension show --name account --only-show-errors
 az account show
 ```
 

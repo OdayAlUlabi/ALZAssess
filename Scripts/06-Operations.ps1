@@ -76,9 +76,12 @@ if (-not $SkipPerResourceDiagnostics) {
             $unsupportedTypes.Add($resourceType) | Out-Null
         }
 
-        $accessToken = & az account get-access-token --resource 'https://management.azure.com' `
-            --query accessToken --output tsv --only-show-errors 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $tokenResult = Invoke-AzCliRaw -Arguments @(
+            'account', 'get-access-token', '--resource', 'https://management.azure.com',
+            '--query', 'accessToken', '--output', 'tsv', '--only-show-errors'
+        )
+        $accessToken = $tokenResult.Output
+        if ($tokenResult.ExitCode -ne 0) {
             throw "Unable to acquire an Azure Resource Manager access token: $($accessToken -join [Environment]::NewLine)"
         }
         $headers = @{ Authorization = "Bearer $($accessToken -join '')" }

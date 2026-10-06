@@ -37,7 +37,22 @@ az account set --subscription '<subscription-id>'
 
 The orchestrator still uses the explicit `-SubscriptionId` scope for Resource Graph.
 
-## 3. Too many subscriptions
+## 3. Collection stops at `Collecting tenants`
+
+Cause:
+
+- The Azure CLI `account` extension is missing. The `az account tenant list` command can otherwise display an interactive dynamic-install prompt that makes unattended collection appear stuck.
+
+Resolution:
+
+```powershell
+az extension add --name account --yes --only-show-errors
+az account tenant list --only-show-errors --output json
+```
+
+The collector disables Azure CLI dynamic-extension installation and stage 00 checks for this extension, so current versions fail with a clear prerequisite error instead of prompting.
+
+## 4. Too many subscriptions
 
 Symptom:
 
@@ -57,7 +72,7 @@ az account list --all `
 
 Restart with an explicit list. Preserve the original output only if it is needed for troubleshooting.
 
-## 4. Authorization failures
+## 5. Authorization failures
 
 ### Azure Resource Manager or Resource Graph 403
 
@@ -104,7 +119,7 @@ Request Security Reader at the relevant scope and rerun stage 5:
 
 Confirm Cost Management Reader or equivalent access, then rerun stage 8.
 
-## 5. Resource Graph failures
+## 6. Resource Graph failures
 
 The collector uses direct REST requests, 500-row pages, and bounded retries.
 
@@ -131,7 +146,7 @@ If a query repeatedly fails:
 3. Confirm Azure service health and network connectivity.
 4. Inspect the exact error in `_collection-errors.csv`.
 
-## 6. Microsoft Graph pagination failures
+## 7. Microsoft Graph pagination failures
 
 Symptoms:
 
@@ -148,7 +163,7 @@ If the error persists:
 3. Reauthenticate.
 4. Run only stage 3.
 
-## 7. Workload placeholder error
+## 8. Workload placeholder error
 
 Error:
 
@@ -176,7 +191,7 @@ Then rerun stage 9 and rebuild the evidence index:
 
 Do not use `-Resume` for stages 9 and 10 if their previous completion markers exist and the workload configuration changed.
 
-## 8. Full profile is slow
+## 9. Full profile is slow
 
 Cause:
 
@@ -213,7 +228,7 @@ Per-resource requests use Azure Resource Manager REST rather than the Azure CLI 
 
 If an older collector version recorded `ResourceTypeNotSupported` as an error, update the repository and rerun stage 6 into a new output directory, or remove the existing stage 6 completion marker and stale stage 6 error rows before resuming.
 
-## 9. Empty output
+## 10. Empty output
 
 Do not assume an empty JSON array means no gap exists.
 
@@ -226,7 +241,7 @@ Check:
 5. Query support for the resource type.
 6. Whether the resource exists in another tenant or subscription.
 
-## 10. Resume behavior
+## 11. Resume behavior
 
 `-Resume` trusts `_stage-NN.complete.json`.
 
@@ -246,7 +261,7 @@ Use a new output directory when:
 - Collection scripts changed.
 - Evidence must represent a clean point-in-time snapshot.
 
-## 11. Pipeline use
+## 12. Pipeline use
 
 For automation:
 
@@ -264,7 +279,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Archive the output directory only after stage 10 succeeds.
 
-## 12. Performance monitoring
+## 13. Performance monitoring
 
 Review stage duration:
 
@@ -285,7 +300,7 @@ Select-String `
   -Pattern 'records in'
 ```
 
-## 13. Operational checklist
+## 14. Operational checklist
 
 Before collection:
 

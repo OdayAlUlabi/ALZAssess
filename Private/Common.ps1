@@ -281,6 +281,35 @@ function Save-Json {
     ConvertTo-Json -InputObject $sanitizedData -Depth 100 | Set-Content -LiteralPath $Path -Encoding utf8
 }
 
+function Invoke-AzCliRaw {
+    param([Parameter(Mandatory)][string[]]$Arguments)
+
+    $hadDynamicInstallSetting = Test-Path Env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL
+    $previousDynamicInstall = $env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL
+    try {
+        [Environment]::SetEnvironmentVariable(
+            'AZURE_EXTENSION_USE_DYNAMIC_INSTALL',
+            'no',
+            [EnvironmentVariableTarget]::Process
+        )
+        $output = @(& az @Arguments 2>&1)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        if ($hadDynamicInstallSetting) {
+            $env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL = $previousDynamicInstall
+        }
+        else {
+            Remove-Item Env:AZURE_EXTENSION_USE_DYNAMIC_INSTALL -ErrorAction SilentlyContinue
+        }
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output   = $output
+    }
+}
+
 function Invoke-AzCliJson {
     param(
         [Parameter(Mandatory)][string]$Stage,
@@ -292,8 +321,9 @@ function Invoke-AzCliJson {
 
     Write-CollectionLog -Level INFO -Message "Collecting $Name"
     $allArguments = @($Arguments) + @('--only-show-errors', '--output', 'json')
-    $output = & az @allArguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $cliResult = Invoke-AzCliRaw -Arguments $allArguments
+    $output = $cliResult.Output
+    if ($cliResult.ExitCode -ne 0) {
         Add-CollectionError -Stage $Stage -Item $Name -Message ($output -join [Environment]::NewLine) -Required $Required
         if ($Required) {
             throw "Required collection '$Name' failed."
@@ -336,8 +366,12 @@ function Invoke-AzRestPaged {
     else {
         'https://management.azure.com'
     }
-    $accessToken = & az account get-access-token --resource $tokenResource --query accessToken --output tsv --only-show-errors 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $tokenResult = Invoke-AzCliRaw -Arguments @(
+        'account', 'get-access-token', '--resource', $tokenResource,
+        '--query', 'accessToken', '--output', 'tsv', '--only-show-errors'
+    )
+    $accessToken = $tokenResult.Output
+    if ($tokenResult.ExitCode -ne 0) {
         Add-CollectionError -Stage $Stage -Item $Name -Message ($accessToken -join [Environment]::NewLine) -Required $Required
         if ($Required) {
             throw "Required collection '$Name' failed."
@@ -442,9 +476,13 @@ function Invoke-AzGraphQuery {
         try {
             do {
                 $attempt++
-                $output = & az rest --method post --url $queryUri --headers 'Content-Type=application/json' `
-                    --body "@$requestPath" --only-show-errors --output json 2>&1
-                $succeeded = $LASTEXITCODE -eq 0
+                $cliResult = Invoke-AzCliRaw -Arguments @(
+                    'rest', '--method', 'post', '--url', $queryUri,
+                    '--headers', 'Content-Type=application/json',
+                    '--body', "@$requestPath", '--only-show-errors', '--output', 'json'
+                )
+                $output = $cliResult.Output
+                $succeeded = $cliResult.ExitCode -eq 0
                 if (-not $succeeded -and $attempt -lt $MaxAttempts) {
                     Write-CollectionLog -Level WARN -Message "Resource Graph query '$Name' attempt $attempt failed; retrying in $($attempt * 5) seconds."
                     Start-Sleep -Seconds ($attempt * 5)
